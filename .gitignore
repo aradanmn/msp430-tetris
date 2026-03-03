@@ -1,0 +1,27 @@
+# VM disk and firmware images — too large for git
+vm/*.img
+vm/*.iso
+vm/*.fd
+
+# Claude Code internal files
+CLAUDE.md
+handheld-msp430/CLAUDE.md
+.claude/
+
+# Junk / scratch files
+test.txt
+from-vm.txt
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build output
+*.elf
+*.o
+*.map

@@ -1,0 +1,309 @@
+#!/usr/bin/expect -f
+#==============================================================================
+# alpine-install.exp — Automated Alpine Linux 3.23 installation via QEMU
+#
+# Uses an event-driven loop that handles setup-alpine prompts as they arrive,
+# regardless of order.  This handles Alpine 3.23 differences from older
+# versions:
+#   • keyboard layout prompt removed
+#   • 'f' for mirror auto-selects and advances (no 'done' needed)
+#   • SSH server not prompted — we install openssh in post-install chroot
+#   • NTP default changed from chrony to busybox
+#
+# Arguments:
+#   $1 : writable EFI vars path
+#   $2 : disk image path
+#   $3 : installer ISO path
+#
+# Called by full-setup.sh — not intended for direct use.
+#==============================================================================
+
+if {[llength $argv] < 3} {
+    puts "Usage: [info script] <efi-vars> <disk> <iso>"
+    puts "Called automatically by full-setup.sh."
+    exit 1
+}
+
+set UEFI_VARS [lindex $argv 0]
+set DISK      [lindex $argv 1]
+set ISO       [lindex $argv 2]
+set QEMU      "/opt/homebrew/bin/qemu-system-aarch64"
+set UEFI_CODE "/opt/homebrew/share/qemu/edk2-aarch64-code.fd"
+
+puts "\n==> \[Phase 1\] Alpine Linux installation"
+puts "    EFI vars : $UEFI_VARS"
+puts "    Disk     : $DISK"
+puts "    ISO      : $ISO"
+puts "    Estimated: ~10 minutes\n"
+
+# ---------------------------------------------------------------------------
+# Boot QEMU with ISO as second virtio-blk device.
+# UEFI finds no EFI loader on the empty disk, falls through to the ISO.
+# ---------------------------------------------------------------------------
+spawn $QEMU \
+    -machine "virt,highmem=on" \
+    -accel hvf \
+    -cpu host \
+    -smp 2 \
+    -m 2048 \
+    -drive "if=pflash,format=raw,readonly=on,file=$UEFI_CODE" \
+    -drive "if=pflash,format=raw,file=$UEFI_VARS" \
+    -drive "file=$DISK,if=virtio,format=raw" \
+    -drive "file=$ISO,if=virtio,format=raw,readonly=on" \
+    -netdev "user,id=net0,hostfwd=tcp::2222-:22" \
+    -device "virtio-net-pci,netdev=net0" \
+    -display none \
+    -serial stdio \
+    -monitor none
+
+# ---------------------------------------------------------------------------
+# Wait for Alpine live login prompt (up to 3 minutes)
+# ---------------------------------------------------------------------------
+set timeout 180
+expect {
+    -re {login:\s*$} { }
+    timeout {
+        puts "\nERROR: Alpine did not boot within 3 minutes."
+        exit 1
+    }
+}
+send "root\r"
+set timeout 15
+expect {
+    -re {[Pp]assword:\s} { send "\r"; exp_continue }
+    "# "                 { }
+    timeout              { puts "\nERROR: Root login failed."; exit 1 }
+}
+
+puts "==> Logged in. Running setup-alpine..."
+send "setup-alpine\r"
+
+# ---------------------------------------------------------------------------
+# setup-alpine event loop
+#
+# Each iteration waits for the next recognisable prompt and responds.
+# State flags ensure we don't double-send critical inputs:
+#   mirror_sent — 'f' was already sent to start mirror detection
+#   disk_sent   — 'vda' was already sent for disk selection
+#   mode_sent   — 'sys' was already sent for install mode
+#
+# Why not a sequential approach?  Alpine 3.23 changed prompt order and
+# removed some prompts entirely; an event loop handles any version.
+# ---------------------------------------------------------------------------
+set mirror_sent 0
+set disk_sent   0
+set mode_sent   0
+set timeout     60
+
+while 1 {
+    expect {
+
+        # ── Hostname ─────────────────────────────────────────────────────────
+        -re {system hostname.*\[} {
+            send "msp430\r"
+        }
+
+        # ── Network interface (accept default eth0) ───────────────────────────
+        -re {[Ww]hich.*initialize\?} {
+            send "\r"
+        }
+
+        # ── IP address (accept default dhcp) ─────────────────────────────────
+        -re {[Ii]p address for} {
+            send "dhcp\r"
+        }
+
+        # ── Manual network config (decline) ──────────────────────────────────
+        # Must come before the generic (y/n) handler below.
+        -re {manual network config} {
+            send "n\r"
+        }
+
+        # ── DNS (optional — not asked when DHCP is used) ──────────────────────
+        -re {DNS.*domain}     { send "\r" }
+        -re {DNS.*nameserver} { send "\r" }
+
+        # ── Root password ─────────────────────────────────────────────────────
+        -re {New password:\s*$} {
+            send "alpine123\r"
+        }
+        -re {Retype password:\s*$} {
+            send "alpine123\r"
+        }
+
+        # ── Timezone ──────────────────────────────────────────────────────────
+        -re {[Ww]hich timezone} {
+            send "UTC\r"
+        }
+
+        # ── HTTP proxy (none) ─────────────────────────────────────────────────
+        -re {HTTP.*proxy URL} {
+            send "\r"
+        }
+
+        # ── NTP client (accept default — busybox in 3.23, chrony in older) ───
+        -re {NTP client to run} {
+            send "\r"
+        }
+
+        # ── APK mirror ────────────────────────────────────────────────────────
+        # Match only the actual INPUT prompt, not the menu header lines.
+        # Alpine 3.23: 'f' auto-selects the fastest mirror and advances.
+        # Older Alpine: 'f' selects, then returns to prompt → send 'done'.
+        -re {Enter mirror number|mirror.*URL.*\[1\]} {
+            if {!$mirror_sent} {
+                set mirror_sent 1
+                send "f\r"
+                puts "    (Finding fastest APK mirror — up to 5 minutes...)"
+                set timeout 360
+            }
+            # else: spurious re-match before speed test — do nothing
+        }
+
+        # ── SSH server (absent in Alpine 3.23 — handled post-install) ─────────
+        -re {[Ss][Ss][Hh] server} {
+            send "\r"
+        }
+
+        # ── Root SSH login ────────────────────────────────────────────────────
+        -re {[Rr]oot.*login|[Rr]oot.*ssh} {
+            send "yes\r"
+        }
+
+        # ── User creation (skip — dev user created by vm-setup.sh) ────────────
+        -re {[Ss]etup a user|loginname.*no\)} {
+            send "\r"
+        }
+
+        # ── Disk selection ────────────────────────────────────────────────────
+        -re {[Ww]hich disk} {
+            if {!$disk_sent} {
+                set disk_sent 1
+                send "vda\r"
+            }
+        }
+
+        # ── Installation mode ─────────────────────────────────────────────────
+        -re {[Hh]ow.*use it} {
+            if {$disk_sent && !$mode_sent} {
+                set mode_sent 1
+                send "sys\r"
+            }
+        }
+
+        # ── Erase confirmation ────────────────────────────────────────────────
+        # Generic (y/n) [n] handler — only confirms if we have already sent
+        # the disk and mode, making it safe against other (y/n) prompts.
+        -re {\(y/n\).*\[n\]} {
+            if {$mode_sent} {
+                send "y\r"
+                set timeout 300
+                puts "    (Installing Alpine to disk — ~3 minutes...)"
+            }
+        }
+
+        # ── Installation complete ─────────────────────────────────────────────
+        -re {[Ii]nstallation is complete} {
+            puts "==> Installation complete."
+            break
+        }
+
+        # ── Unexpected timeout ────────────────────────────────────────────────
+        timeout {
+            puts "\nERROR: Unexpected timeout during setup-alpine."
+            puts "       mirror_sent=$mirror_sent  disk_sent=$disk_sent  mode_sent=$mode_sent"
+            exit 1
+        }
+
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Wait for shell prompt after setup-alpine exits
+# ---------------------------------------------------------------------------
+set timeout 15
+expect {
+    "# " { }
+    timeout { send "\r"; set timeout 5; expect "# " }
+}
+
+# ---------------------------------------------------------------------------
+# Post-install: install openssh and configure root login.
+#
+# Alpine 3.23 setup-alpine no longer prompts for SSH server, so openssh may
+# not be on the installed disk.  We chroot into the installed root partition,
+# install openssh from APK (mirrors already configured by setup-alpine), and
+# force PermitRootLogin yes so phase 2 can inject the SSH key via password.
+#
+# Tcl {} quoting sends shell commands verbatim (no Tcl variable expansion).
+# ---------------------------------------------------------------------------
+puts "==> Post-install: configuring SSH on installed system..."
+
+send "umount -R /mnt 2>/dev/null; true\r"
+expect "# "
+
+# Find the ext4 root partition (Alpine sys mode uses ext4 for root)
+send {ROOT=$(blkid -t TYPE=ext4 -o device 2>/dev/null | head -1) && echo "root=$ROOT"}
+send "\r"
+set timeout 10
+expect "# "
+
+send {[ -n "$ROOT" ] && mount "$ROOT" /mnt; true}
+send "\r"
+expect "# "
+
+# Bind-mount /proc so APK resolver works inside the chroot
+send {mount -t proc none /mnt/proc 2>/dev/null; true}
+send "\r"
+expect "# "
+
+# Copy DNS config so the chroot can reach APK mirrors
+send {cp -L /etc/resolv.conf /mnt/etc/resolv.conf 2>/dev/null; true}
+send "\r"
+expect "# "
+
+# Install openssh (no-op if already present, ~5 sec if not)
+puts "    Installing openssh in chroot..."
+send {chroot /mnt apk add --no-cache openssh 2>&1 | tail -2}
+send "\r"
+set timeout 120
+expect "# "
+
+# Enable sshd at boot
+send {chroot /mnt rc-update add sshd default 2>/dev/null; true}
+send "\r"
+set timeout 15
+expect "# "
+
+# Allow root password authentication (needed for key injection in phase 2)
+send {sed -i '/PermitRootLogin/d' /mnt/etc/ssh/sshd_config 2>/dev/null; true}
+send "\r"
+expect "# "
+
+send {echo 'PermitRootLogin yes' >> /mnt/etc/ssh/sshd_config}
+send "\r"
+expect "# "
+
+send {grep 'PermitRootLogin' /mnt/etc/ssh/sshd_config && echo "SSH: root login enabled"}
+send "\r"
+expect "# "
+
+# Unmount
+send {umount /mnt/proc 2>/dev/null; umount /mnt 2>/dev/null; true}
+send "\r"
+expect "# "
+
+puts "==> SSH configured."
+
+# ---------------------------------------------------------------------------
+# Power off — QEMU exits; efi_vars.fd now contains Alpine's boot entry
+# ---------------------------------------------------------------------------
+puts "==> Powering off..."
+send "poweroff\r"
+set timeout 60
+expect {
+    eof     { }
+    timeout { }
+}
+
+puts "==> \[Phase 1\] Complete — Alpine Linux installed.\n"
