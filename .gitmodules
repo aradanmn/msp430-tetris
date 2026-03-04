@@ -1,0 +1,3 @@
+[submodule "handheld-msp430"]
+	path = handheld-msp430
+	url = git@github.com:aradanmn/Handheld-MSP430.git
