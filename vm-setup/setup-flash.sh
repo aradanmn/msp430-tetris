@@ -3,46 +3,51 @@
 # setup-flash.sh
 #
 # Enables "make flash" for the MSP430 LaunchPad eZ-FET lite (USB 2047:0013)
-# on ARM64 Debian 12 (bookworm).
+# on the Alpine Linux QEMU VM.
 #
 # Background
 # ──────────
-# The LaunchPad Rev 1.5 ships with an eZ-FET lite debugger (VID:PID 2047:0013).
-# The old "mspdebug rf2500" command only supports the original RF2500 FET
-# (0451:f432) and will NOT work with the eZ-FET lite.
+# The LaunchPad Rev 1.5 uses an eZ-FET lite debugger (VID:PID 2047:0013).
+# "mspdebug rf2500" does NOT support it.  Two drivers do:
 #
-# Two compatible flash drivers exist in mspdebug:
-#   tilib  — uses TI's open-source MSP430 Debug Stack (libmsp430.so)
-#             Full-featured; requires compiling the library from source.
-#   ezfet  — direct built-in USB driver added in mspdebug 0.25
-#             Zero compilation; supports 2047:0013 on Debian 12 out of the box.
+#   tilib  — uses TI's MSP430 Debug Stack (libmsp430.so, compiled from source)
+#             Full-featured; preferred when it builds.
+#   ezfet  — built-in driver added in mspdebug 0.25 (already in your binary)
+#             No compilation needed; works on Alpine musl libc.
 #
-# This script:
-#   1. Installs mspdebug and build dependencies
-#   2. Adds udev rules so the eZ-FET is accessible without root
-#   3. Adds you to the plugdev / dialout groups
-#   4. Tries to build libmsp430.so from TI's open-source Debug Stack
-#      (primary path — most complete driver)
-#   5. Falls back to the built-in ezfet driver if the build fails
-#   6. Updates all ~/course Makefiles to use the working driver
-#   7. Prints exactly what to do next
+# NOTE: libmsp430.so is unlikely to compile on Alpine (musl libc lacks
+# execinfo.h used by the Debug Stack).  This script tries anyway, then
+# falls back to ezfet, which is fully functional for "make flash".
 #
-# Run time: ~10 minutes on first run (mostly compiling libmsp430.so).
-# Run as your normal user — will sudo when needed.
+# What this script does:
+#   1. Installs hidapi-dev, cmake, pkgconf, unzip, eudev
+#   2. Starts eudev so udev rules apply (VM was using mdev by default)
+#   3. Adds hidraw udev rule for libmsp430.so HIDAPI path
+#   4. Builds libmsp430.so from TI MSP430 Debug Stack source (may fail on musl)
+#   5. Selects ezfet fallback if build fails
+#   6. Configures library path (/etc/ld-musl-aarch64.path) if tilib was built
+#   7. Updates all ~/course Makefiles to use the working driver
+#   8. Tests the connection if LaunchPad is already attached
+#
+# Run as dev (not root) — uses passwordless sudo when needed.
+# Runtime: ~5 min if ezfet; ~15 min if libmsp430.so builds successfully.
 #
 # Usage:
+#   # Boot the VM with LaunchPad USB passed through (see QEMU command below)
+#   # SSH in as dev, then:
 #   chmod +x ~/setup-flash.sh
 #   ./setup-flash.sh
-#   # Unplug + replug LaunchPad, then log out and back in (or: newgrp plugdev)
+#   sudo reboot
+#   # Replug LaunchPad, test: mspdebug ezfet exit
 #==============================================================================
 set -euo pipefail
 
-COURSE_DIR="${HOME}/course"
+COURSE_DIRS=("${HOME}/course" "${HOME}/msp430-dev-vm/course")
 BUILD_DIR="${HOME}/msp430-tilib-build"
 LIB_DIR="/usr/local/lib"
-DRIVER=""   # will be set to "tilib" or "ezfet"
+DRIVER=""
 
-# ── colour helpers ─────────────────────────────────────────────────────────────
+# ── colour helpers ──────────────────────────────────────────────────────────
 _G='\033[0;32m'; _Y='\033[1;33m'; _R='\033[0;31m'; _N='\033[0m'
 step()  { echo -e "\n${_G}==> $*${_N}"; }
 info()  { echo    "    $*"; }
@@ -50,54 +55,65 @@ warn()  { echo -e "${_Y}    WARN: $*${_N}"; }
 ok()    { echo -e "${_G}    OK: $*${_N}"; }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 1 — Install packages
+# STEP 1 — Install additional packages
 # ══════════════════════════════════════════════════════════════════════════════
-step "Installing packages..."
-sudo apt-get update -qq
-DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
-    mspdebug \
-    libhidapi-libusb0 \
-    libhidapi-dev \
-    libusb-1.0-0-dev \
+step "Installing additional packages..."
+sudo apk add --no-cache \
+    hidapi-dev \
     cmake \
-    git \
-    build-essential \
+    pkgconf \
     unzip \
-    wget \
-    libboost-filesystem-dev \
-    libboost-system-dev \
-    pkg-config \
-    2>&1 | grep -E "^(Get:|Setting up|Processing)" || true
+    eudev
 ok "Packages installed."
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 2 — udev rules (non-root USB access for eZ-FET lite)
+# STEP 2 — Enable eudev
+#
+# Alpine's virt install uses mdev (BusyBox) by default, so udev rules are
+# written to disk but never applied.  Switch to eudev so the TI rules take
+# effect and /dev/bus/usb/* and /dev/hidraw* get the right permissions.
 # ══════════════════════════════════════════════════════════════════════════════
-step "Writing udev rules..."
-sudo tee /etc/udev/rules.d/71-ti-msp430.rules > /dev/null <<'UDEV'
-# TI MSP430 LaunchPad eZ-FET lite (Rev 1.5+)  —  VID:PID 2047:0013
-SUBSYSTEM=="usb", ATTRS{idVendor}=="2047", ATTRS{idProduct}=="0013", MODE="0664", GROUP="plugdev", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="2047", ATTRS{idProduct}=="0010", MODE="0664", GROUP="plugdev", TAG+="uaccess"
-KERNEL=="hidraw*", ATTRS{idVendor}=="2047", MODE="0664", GROUP="plugdev", TAG+="uaccess"
-# TI RF2500 (older LaunchPad Rev 1.4)  —  VID:PID 0451:f432
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0451", ATTRS{idProduct}=="f432", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+step "Enabling eudev service..."
+
+# Remove mdev from sysinit to avoid conflicts (ignore errors if absent)
+sudo rc-update del mdev sysinit 2>/dev/null || true
+
+if ! rc-update show default 2>/dev/null | grep -q "udev" && \
+   ! rc-update show sysinit 2>/dev/null | grep -q "udev"; then
+    sudo rc-update add udev sysinit
+    sudo rc-update add udev-trigger sysinit
+    sudo rc-update add udev-settle sysinit
+    info "Added eudev to sysinit runlevel."
+    info "Device permission rules will be active after reboot."
+else
+    info "eudev already in runlevel — skipping."
+fi
+
+# Add comprehensive hidraw rule (not in vm-setup.sh's basic rule file)
+sudo tee /etc/udev/rules.d/72-ti-hidraw.rules > /dev/null << 'UDEV'
+# TI eZ-FET lite — hidraw node access (needed by libmsp430.so / HIDAPI)
+KERNEL=="hidraw*", ATTRS{idVendor}=="2047", MODE="0664", GROUP="plugdev"
 UDEV
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-ok "Written: /etc/udev/rules.d/71-ti-msp430.rules"
+
+# Attempt a live reload if eudev is already running
+if sudo udevadm control --reload-rules 2>/dev/null; then
+    sudo udevadm trigger 2>/dev/null || true
+    info "udev rules reloaded."
+else
+    info "eudev not yet running — rules will load after reboot."
+fi
+
+ok "eudev configured."
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 3 — Group membership
+# STEP 3 — Build libmsp430.so from TI MSP430 Debug Stack
+#
+# NOTE: This step commonly fails on Alpine (musl libc) because the Debug Stack
+# uses execinfo.h (backtrace), which is a glibc extension unavailable in musl.
+# The script will fall through to the ezfet driver in that case.
 # ══════════════════════════════════════════════════════════════════════════════
-step "Adding ${USER} to plugdev and dialout groups..."
-sudo usermod -aG plugdev,dialout "${USER}"
-info "Group change takes effect at next login (or run: newgrp plugdev)."
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 4 — Build libmsp430.so (TI MSP430 Debug Stack)
-# ══════════════════════════════════════════════════════════════════════════════
-step "Building TI MSP430 Debug Stack → libmsp430.so ..."
-info "This may take several minutes."
+step "Attempting to build TI MSP430 Debug Stack → libmsp430.so ..."
+info "(Likely to fail on Alpine musl — will use ezfet fallback if so)"
 
 TILIB_BUILT=false
 LIBMSP430=""
@@ -106,33 +122,29 @@ SOURCE_DIR=""
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 
-# ── Try SourceForge (authoritative upstream) ──────────────────────────────────
+# ── Try SourceForge (authoritative upstream) ──────────────────────────────
 SF_URL="https://sourceforge.net/projects/mspds/files/MSPDebugStack_OS_Package_3_15_1_1.zip/download"
 info "Downloading from SourceForge..."
 if wget -q --show-progress -L \
         -O "${BUILD_DIR}/debugstack.zip" \
-        "${SF_URL}" 2>&1 && \
-   [ -s "${BUILD_DIR}/debugstack.zip" ]; then
+        "${SF_URL}" 2>&1 \
+   && [ -s "${BUILD_DIR}/debugstack.zip" ]; then
     info "Extracting..."
     unzip -q "${BUILD_DIR}/debugstack.zip" -d "${BUILD_DIR}/sf-src" 2>/dev/null || true
-    # The zip might have a nested directory — find CMakeLists.txt or Makefile
-    FOUND_CMAKE=$(find "${BUILD_DIR}/sf-src" -name "CMakeLists.txt" -print -quit 2>/dev/null || true)
     FOUND_MAKE=$(find "${BUILD_DIR}/sf-src" -name "Makefile" -print -quit 2>/dev/null || true)
-    if [ -n "${FOUND_CMAKE}" ]; then
-        SOURCE_DIR=$(dirname "${FOUND_CMAKE}")
-    elif [ -n "${FOUND_MAKE}" ]; then
-        SOURCE_DIR=$(dirname "${FOUND_MAKE}")
+    FOUND_CMAKE=$(find "${BUILD_DIR}/sf-src" -name "CMakeLists.txt" -print -quit 2>/dev/null || true)
+    if   [ -n "${FOUND_MAKE}" ];  then SOURCE_DIR=$(dirname "${FOUND_MAKE}")
+    elif [ -n "${FOUND_CMAKE}" ]; then SOURCE_DIR=$(dirname "${FOUND_CMAKE}")
     fi
 fi
 
-# ── Fallback: GitHub mirror ───────────────────────────────────────────────────
+# ── Fallback: GitHub mirror ───────────────────────────────────────────────
 if [ -z "${SOURCE_DIR}" ]; then
-    warn "SourceForge unavailable or empty — trying GitHub mirror..."
-    GH_URLS=(
-        "https://github.com/nicowillis/MSP430DebugStack.git"
+    warn "SourceForge unavailable — trying GitHub mirror..."
+    for GH_URL in \
+        "https://github.com/nicowillis/MSP430DebugStack.git" \
         "https://github.com/czietz/msp430-debugstack.git"
-    )
-    for GH_URL in "${GH_URLS[@]}"; do
+    do
         info "Cloning ${GH_URL} ..."
         if git clone --depth=1 "${GH_URL}" "${BUILD_DIR}/gh-src" 2>&1 | tail -2; then
             SOURCE_DIR="${BUILD_DIR}/gh-src"
@@ -142,144 +154,172 @@ if [ -z "${SOURCE_DIR}" ]; then
     done
 fi
 
-# ── Build ─────────────────────────────────────────────────────────────────────
+# ── Attempt Makefile build ────────────────────────────────────────────────
 if [ -n "${SOURCE_DIR}" ]; then
-    info "Source directory: ${SOURCE_DIR}"
+    info "Source at: ${SOURCE_DIR}"
     cd "${SOURCE_DIR}"
 
-    BUILD_OK=false
-
-    # cmake build
-    if [ -f CMakeLists.txt ]; then
-        info "cmake build..."
-        if cmake -B "${BUILD_DIR}/cmake-out" \
-                 -S . \
-                 -DCMAKE_BUILD_TYPE=Release \
-                 -DBUILD_SHARED_LIBS=ON \
-                 -DCMAKE_C_FLAGS="-fPIC" \
-                 -DCMAKE_CXX_FLAGS="-fPIC" \
-                 2>&1 | tail -5 \
-        && cmake --build "${BUILD_DIR}/cmake-out" \
-                 -j"$(nproc)" \
-                 2>&1 | tail -10; then
-            LIBMSP430=$(find "${BUILD_DIR}/cmake-out" -name "libmsp430.so" -print -quit 2>/dev/null || true)
-            [ -n "${LIBMSP430}" ] && BUILD_OK=true
+    if [ -f Makefile ]; then
+        info "Makefile build (attempting STATIC=0)..."
+        # Suppress the full error log — we expect this to fail on musl.
+        if make -j"$(nproc)" STATIC=0 2>"${BUILD_DIR}/build.log" || \
+           make -j"$(nproc)"          2>>"${BUILD_DIR}/build.log"; then
+            LIBMSP430=$(find "${SOURCE_DIR}" -name "libmsp430.so" -print -quit 2>/dev/null || true)
         fi
     fi
 
-    # make build (if cmake produced nothing or no CMakeLists.txt)
-    if ! $BUILD_OK && [ -f Makefile ]; then
-        info "make build..."
-        # Try common flags; ignore errors from individual attempts
-        make -j"$(nproc)" STATIC=0 2>&1 | tail -15 || \
-        make -j"$(nproc)"          2>&1 | tail -15 || true
-        LIBMSP430=$(find "${SOURCE_DIR}" -name "libmsp430.so" -print -quit 2>/dev/null || true)
-        [ -n "${LIBMSP430}" ] && BUILD_OK=true
+    # ── cmake fallback (only if Makefile produced nothing) ────────────────
+    if [ -z "${LIBMSP430}" ] && [ -f CMakeLists.txt ]; then
+        info "Trying cmake build (installs boost-dev — this is large)..."
+        sudo apk add --no-cache boost-dev
+        cmake -B "${BUILD_DIR}/cmake-out" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=ON \
+              -DCMAKE_C_FLAGS="-fPIC" \
+              -DCMAKE_CXX_FLAGS="-fPIC" \
+              2>"${BUILD_DIR}/cmake.log" \
+        && cmake --build "${BUILD_DIR}/cmake-out" \
+                 -j"$(nproc)" \
+                 2>>"${BUILD_DIR}/cmake.log" || true
+        LIBMSP430=$(find "${BUILD_DIR}/cmake-out" -name "libmsp430.so" -print -quit 2>/dev/null || true)
     fi
 
-    # Install
-    if $BUILD_OK && [ -n "${LIBMSP430}" ]; then
+    if [ -n "${LIBMSP430}" ]; then
         sudo cp "${LIBMSP430}" "${LIB_DIR}/libmsp430.so"
-        sudo ldconfig
         ok "Installed: ${LIB_DIR}/libmsp430.so"
         TILIB_BUILT=true
+    else
+        warn "libmsp430.so did not build (expected on Alpine musl — see ${BUILD_DIR}/build.log)."
     fi
+
+    cd "${HOME}"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 5 — Select driver
+# STEP 4 — Select flash driver
 # ══════════════════════════════════════════════════════════════════════════════
 if $TILIB_BUILT; then
     DRIVER="tilib"
-    step "Driver selected: mspdebug tilib  (libmsp430.so built and installed)"
+    step "Driver selected: mspdebug tilib  (libmsp430.so installed)"
 
-    # /usr/local/lib is in ldconfig's default search path on Debian, but
-    # add LD_LIBRARY_PATH to .bashrc as belt-and-suspenders insurance.
-    if ! grep -q "libmsp430\|msp430-tilib" "${HOME}/.bashrc" 2>/dev/null; then
-        {
-            echo ""
-            echo "# MSP430 Debug Stack (libmsp430.so for mspdebug tilib)"
-            echo "export LD_LIBRARY_PATH=\"/usr/local/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\""
-        } >> "${HOME}/.bashrc"
-        info "Added LD_LIBRARY_PATH=/usr/local/lib to ~/.bashrc"
+    # Alpine musl: ldconfig doesn't scan /usr/local/lib by default.
+    # Add it to the musl dynamic linker search path.
+    ARCH=$(uname -m)           # e.g. aarch64
+    MUSL_PATH="/etc/ld-musl-${ARCH}.path"
+    if ! grep -qF "${LIB_DIR}" "${MUSL_PATH}" 2>/dev/null; then
+        echo "${LIB_DIR}" | sudo tee -a "${MUSL_PATH}" > /dev/null
+        info "Added ${LIB_DIR} to ${MUSL_PATH}"
     fi
-    export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+    # Belt-and-suspenders: also set LD_LIBRARY_PATH in .bashrc
+    if ! grep -q "msp430.*tilib\|LD_LIBRARY_PATH.*${LIB_DIR}" "${HOME}/.bashrc" 2>/dev/null; then
+        cat >> "${HOME}/.bashrc" << 'BASHRC'
+
+# MSP430 Debug Stack — libmsp430.so search path for mspdebug tilib
+export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+BASHRC
+        info "Added LD_LIBRARY_PATH to ~/.bashrc"
+    fi
+    export LD_LIBRARY_PATH="${LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
 else
     DRIVER="ezfet"
-    warn "libmsp430.so build failed (or source unavailable)."
-    warn "Falling back to mspdebug's built-in ezfet driver."
-    info "The ezfet driver in mspdebug 0.25 (Debian 12) supports 2047:0013."
-    step "Driver selected: mspdebug ezfet  (no extra library needed)"
+    warn "Falling back to mspdebug ezfet (zero-dependency built-in driver)."
+    info "ezfet fully supports the eZ-FET lite (2047:0013) for programming."
+    step "Driver selected: mspdebug ezfet"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 6 — Update ~/course Makefiles
+# STEP 5 — Update ~/course Makefiles
 # ══════════════════════════════════════════════════════════════════════════════
-step "Updating ~/course Makefiles → mspdebug ${DRIVER} ..."
-if [ -d "${COURSE_DIR}" ]; then
-    UPDATED=0
-    while IFS= read -r -d '' mf; do
-        if grep -q "mspdebug" "${mf}" 2>/dev/null; then
-            sed -i \
-                -e "s|mspdebug rf2500|mspdebug ${DRIVER}|g" \
-                -e "s|mspdebug tilib|mspdebug ${DRIVER}|g" \
-                -e "s|mspdebug ezfet|mspdebug ${DRIVER}|g" \
-                "${mf}"
-            UPDATED=$((UPDATED + 1))
-        fi
-    done < <(find "${COURSE_DIR}" -name "Makefile" -print0 2>/dev/null)
-    ok "Updated ${UPDATED} Makefile(s) to use: mspdebug ${DRIVER}"
-else
-    warn "~/course not found — sync your files first."
-    warn "Then run: find ~/course -name Makefile | xargs sed -i 's/mspdebug rf2500/mspdebug ${DRIVER}/g'"
+step "Updating Makefiles → mspdebug ${DRIVER} ..."
+TOTAL_UPDATED=0
+for COURSE_DIR in "${COURSE_DIRS[@]}"; do
+    if [ -d "${COURSE_DIR}" ]; then
+        UPDATED=0
+        while IFS= read -r -d '' mf; do
+            if grep -q "mspdebug" "${mf}" 2>/dev/null; then
+                sed -i \
+                    -e "s|mspdebug rf2500|mspdebug ${DRIVER}|g" \
+                    -e "s|mspdebug tilib|mspdebug ${DRIVER}|g" \
+                    -e "s|mspdebug ezfet|mspdebug ${DRIVER}|g" \
+                    "${mf}"
+                UPDATED=$((UPDATED + 1))
+            fi
+        done < <(find "${COURSE_DIR}" -name "Makefile" -print0 2>/dev/null)
+        ok "Updated ${UPDATED} Makefile(s) in ${COURSE_DIR}"
+        TOTAL_UPDATED=$((TOTAL_UPDATED + UPDATED))
+    fi
+done
+if [ "${TOTAL_UPDATED}" -eq 0 ]; then
+    warn "No course directories found — sync course files first, then re-run this script."
+    info "rsync: rsync -av ~/Documents/msp430-dev-vm/course/ dev@<vm-ip>:~/course/"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 7 — Quick connection test (non-fatal)
+# STEP 6 — Update /etc/motd
 # ══════════════════════════════════════════════════════════════════════════════
-step "Testing connection (non-fatal — device may not be ready yet)..."
+sudo sed -i "s|mspdebug rf2500|mspdebug ${DRIVER}|g" /etc/motd 2>/dev/null || true
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 7 — Connection test (non-fatal)
+# ══════════════════════════════════════════════════════════════════════════════
+step "Testing USB connection (non-fatal — device may not be attached yet)..."
 if lsusb 2>/dev/null | grep -qE "2047:0013|2047:0010"; then
     info "LaunchPad detected on USB ✓"
     if timeout 8 mspdebug "${DRIVER}" "exit" 2>&1; then
         ok "mspdebug ${DRIVER} connected successfully ✓"
     else
-        warn "mspdebug test failed — this is expected before you replug the device."
-        warn "Replug the LaunchPad after this script finishes, then test manually."
+        warn "mspdebug test failed — see 'After reboot' instructions below."
+        warn "Permission errors are normal until eudev is running (after reboot)."
     fi
 else
-    info "LaunchPad not currently detected on USB."
-    info "Plug it in after the script finishes and test with: mspdebug ${DRIVER} exit"
+    info "LaunchPad not detected on USB (that's fine at this stage)."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DONE — print next steps
+# DONE
 # ══════════════════════════════════════════════════════════════════════════════
 echo
-printf "${_G}%s${_N}\n" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-printf "${_G}  setup-flash.sh complete!   Flash driver: mspdebug %s${_N}\n" "${DRIVER}"
-printf "${_G}%s${_N}\n" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+printf "${_G}%s${_N}\n" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+printf "${_G}  setup-flash.sh complete!  Flash driver: mspdebug %s${_N}\n" "${DRIVER}"
+printf "${_G}%s${_N}\n" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo
-echo "  Do these steps now:"
+echo "  Steps to finish:"
 echo ""
-echo "  1.  UNPLUG the LaunchPad USB cable"
-echo "  2.  REPLUG  the LaunchPad USB cable"
-echo "  3.  Log out and back in  (or in this same terminal: exec newgrp plugdev)"
+echo "  1.  Reboot the VM to start eudev (device permission rules):"
+echo "        sudo reboot"
 echo ""
-echo "  Then verify:"
-echo "    mspdebug ${DRIVER} \"exit\""
+echo "  2.  Start QEMU with LaunchPad passed through (on your Mac):"
+echo "        VM=~/Documents/msp430-dev-vm/vm"
+echo "        sudo /opt/homebrew/bin/qemu-system-aarch64 \\"
+echo "          -machine virt,highmem=on -accel hvf -cpu host -smp 2 -m 2048 \\"
+echo "          -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd \\"
+echo "          -drive if=pflash,format=raw,file=\"\$VM/efi_vars.fd\" \\"
+echo "          -drive file=\"\$VM/msp430-dev.img\",if=virtio,format=raw \\"
+echo "          -netdev user,id=net0,hostfwd=tcp::2222-:22 \\"
+echo "          -device virtio-net-pci,netdev=net0 \\"
+echo "          -device usb-ehci,id=ehci \\"
+echo "          -device usb-host,bus=ehci.0,vendorid=0x2047,productid=0x0013 \\"
+echo "          -nographic &"
 echo ""
-echo "  Flash your first program:"
-echo "    cd ~/course/lesson-01-architecture/examples"
-echo "    make flash"
+echo "  3.  SSH back in and test:"
+echo "        ssh -p 2222 dev@127.0.0.1"
+echo "        mspdebug ${DRIVER} exit"
+echo ""
+echo "  4.  Flash your first program:"
+echo "        cd ~/course/lesson-01-architecture/examples"
+echo "        make flash"
 echo ""
 if [ "${DRIVER}" = "tilib" ]; then
     echo "  Troubleshooting tilib:"
-    echo "    • 'libmsp430.so not found'  →  run: source ~/.bashrc"
-    echo "    • Still failing?  Try the ezfet fallback:"
-    echo "        mspdebug ezfet \"prog minimal.elf\""
-    echo "    • If ezfet works, update the Makefile: change 'tilib' → 'ezfet'"
+    echo "    • 'libmsp430.so: not found'  →  run: source ~/.bashrc"
+    echo "    • Still failing?  Try the built-in driver:"
+    echo "        mspdebug ezfet exit"
 else
-    echo "  Note: if you later build libmsp430.so (for 'mspdebug tilib'),"
-    echo "  re-run this script and it will switch the Makefiles automatically."
+    echo "  If you later want to try tilib (more complete debug features):"
+    echo "    Build the MSP430 Debug Stack manually from:"
+    echo "    https://sourceforge.net/projects/mspds/"
+    echo "    then: sudo cp libmsp430.so /usr/local/lib/ && re-run this script"
 fi
 echo ""

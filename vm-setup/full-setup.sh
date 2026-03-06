@@ -285,6 +285,12 @@ scp "${SCP_OPTS[@]}" \
     "$SCRIPT_DIR/install-msp430-support.sh" \
     root@127.0.0.1:/tmp/
 
+# Place setup-flash.sh in dev's home directory (it must run as dev, not root)
+scp "${SCP_OPTS[@]}" \
+    "$SCRIPT_DIR/setup-flash.sh" \
+    root@127.0.0.1:/home/dev/setup-flash.sh
+run_ssh "chown dev:dev /home/dev/setup-flash.sh && chmod +x /home/dev/setup-flash.sh"
+
 info "Scripts uploaded."
 
 # ---------------------------------------------------------------------------
