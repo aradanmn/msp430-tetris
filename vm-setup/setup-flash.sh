@@ -125,7 +125,7 @@ mkdir -p "${BUILD_DIR}"
 # ── Try SourceForge (authoritative upstream) ──────────────────────────────
 SF_URL="https://sourceforge.net/projects/mspds/files/MSPDebugStack_OS_Package_3_15_1_1.zip/download"
 info "Downloading from SourceForge..."
-if wget -q --show-progress -L \
+if wget -q --show-progress -L --timeout=30 \
         -O "${BUILD_DIR}/debugstack.zip" \
         "${SF_URL}" 2>&1 \
    && [ -s "${BUILD_DIR}/debugstack.zip" ]; then
@@ -146,7 +146,7 @@ if [ -z "${SOURCE_DIR}" ]; then
         "https://github.com/czietz/msp430-debugstack.git"
     do
         info "Cloning ${GH_URL} ..."
-        if git clone --depth=1 "${GH_URL}" "${BUILD_DIR}/gh-src" 2>&1 | tail -2; then
+        if GIT_TERMINAL_PROMPT=0 git clone --depth=1 "${GH_URL}" "${BUILD_DIR}/gh-src" 2>&1 | tail -2; then
             SOURCE_DIR="${BUILD_DIR}/gh-src"
             break
         fi
