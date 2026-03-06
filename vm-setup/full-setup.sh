@@ -226,9 +226,13 @@ set pub_key     [lindex $argv 2]
 set timeout 30
 
 # Step A: SCP the public key file to the VM
+# PubkeyAuthentication=no prevents "Too many authentication failures" when
+# the macOS SSH agent has many loaded keys — forces straight to password.
 spawn scp -P $ssh_port \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
+    -o PubkeyAuthentication=no \
+    -o PreferredAuthentications=password \
     $pub_key root@127.0.0.1:/tmp/setup_key.pub
 expect {
     -re {[Pp]assword: } { send "$root_pass\r"; exp_continue }
@@ -240,6 +244,8 @@ expect {
 spawn ssh -p $ssh_port \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
+    -o PubkeyAuthentication=no \
+    -o PreferredAuthentications=password \
     root@127.0.0.1 \
     {mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat /tmp/setup_key.pub >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm /tmp/setup_key.pub && echo "Key installed."}
 expect {
