@@ -202,8 +202,10 @@ for i in $(seq 1 36); do
     fi
     sleep 5
 done
-# Give sshd a moment to fully initialize after the port opens
-sleep 3
+# Give sshd time to fully initialize after the port opens.
+# First boot of a fresh Alpine install generates SSH host keys before
+# accepting connections; 3 seconds was too short — use 10.
+sleep 10
 info "SSH is accepting connections on port $SSH_PORT"
 
 # ---------------------------------------------------------------------------
@@ -241,6 +243,7 @@ expect {
 }
 
 # Step B: Install the key on the VM via SSH
+set key_ok 0
 spawn ssh -p $ssh_port \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
@@ -250,9 +253,13 @@ spawn ssh -p $ssh_port \
     {mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat /tmp/setup_key.pub >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && rm /tmp/setup_key.pub && echo "Key installed."}
 expect {
     -re {[Pp]assword: } { send "$root_pass\r"; exp_continue }
-    "Key installed."    { }
+    "Key installed."    { set key_ok 1 }
     eof                 { }
-    timeout             { puts "WARN: SSH key install timed out"; exit 1 }
+    timeout             { puts "ERROR: SSH key install timed out"; exit 1 }
+}
+if {!$key_ok} {
+    puts "ERROR: Key was not installed (sshd may not be ready yet — retry will help)"
+    exit 1
 }
 EXPECT_SCRIPT
 
@@ -275,10 +282,9 @@ fi
 info "SSH key authentication confirmed."
 
 # ---------------------------------------------------------------------------
-# Step 7: Upload setup scripts to VM
+# Helper: SSH/SCP option arrays and run_ssh function
+# (defined here so they're available for all subsequent steps)
 # ---------------------------------------------------------------------------
-step "7/9" "Uploading setup scripts to VM"
-
 SCP_OPTS=(
     -P "$SSH_PORT"
     -i "$SSH_KEY"
@@ -286,22 +292,7 @@ SCP_OPTS=(
     -o UserKnownHostsFile=/dev/null
     -o BatchMode=yes
 )
-scp "${SCP_OPTS[@]}" \
-    "$SCRIPT_DIR/vm-setup.sh" \
-    "$SCRIPT_DIR/install-msp430-support.sh" \
-    root@127.0.0.1:/tmp/
 
-# Place setup-flash.sh in dev's home directory (it must run as dev, not root)
-scp "${SCP_OPTS[@]}" \
-    "$SCRIPT_DIR/setup-flash.sh" \
-    root@127.0.0.1:/home/dev/setup-flash.sh
-run_ssh "chown dev:dev /home/dev/setup-flash.sh && chmod +x /home/dev/setup-flash.sh"
-
-info "Scripts uploaded."
-
-# ---------------------------------------------------------------------------
-# Helper: SSH function with keep-alive (for long-running commands)
-# ---------------------------------------------------------------------------
 SSH_OPTS_LONG=(
     -p "$SSH_PORT"
     -i "$SSH_KEY"
@@ -315,6 +306,24 @@ SSH_OPTS_LONG=(
 run_ssh() {
     ssh "${SSH_OPTS_LONG[@]}" root@127.0.0.1 "$@"
 }
+
+# ---------------------------------------------------------------------------
+# Step 7: Upload setup scripts to VM
+# ---------------------------------------------------------------------------
+step "7/9" "Uploading setup scripts to VM"
+
+scp "${SCP_OPTS[@]}" \
+    "$SCRIPT_DIR/vm-setup.sh" \
+    "$SCRIPT_DIR/install-msp430-support.sh" \
+    root@127.0.0.1:/tmp/
+
+# Place setup-flash.sh in dev's home directory (it must run as dev, not root)
+scp "${SCP_OPTS[@]}" \
+    "$SCRIPT_DIR/setup-flash.sh" \
+    root@127.0.0.1:/home/dev/setup-flash.sh
+run_ssh "chown dev:dev /home/dev/setup-flash.sh && chmod +x /home/dev/setup-flash.sh"
+
+info "Scripts uploaded."
 
 # ---------------------------------------------------------------------------
 # Step 8a: Run vm-setup.sh (~15 min)
