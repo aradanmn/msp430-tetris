@@ -90,8 +90,8 @@ cmd_start() {
 
     local usb_args=()
     if [ "${1:-}" = "--usb" ]; then
-        usb_args=(-device usb-ehci,id=ehci
-                  -device "usb-host,bus=ehci.0,vendorid=0x2047,productid=0x0013")
+        usb_args=(-device qemu-xhci,id=xhci
+                  -device "usb-host,bus=xhci.0,vendorid=0x2047,productid=0x0013")
         echo -e "${BOLD}Starting VM with USB passthrough...${NC}"
         if [ "$(id -u)" -ne 0 ]; then
             echo -e "${YELLOW}USB passthrough requires sudo. Re-running with sudo...${NC}"
