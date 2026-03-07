@@ -11,18 +11,54 @@
 #==============================================================================
 set -e
 
-PREFIX=/usr/local
 GCC_VER=$(msp430-elf-gcc -dumpversion 2>/dev/null) || {
     echo "ERROR: msp430-elf-gcc not found in PATH"; exit 1; }
 
-GCCDATA="$PREFIX/lib/gcc/msp430-elf/$GCC_VER"
+# Detect actual GCC data directory from the compiler — works whether GCC was
+# installed via package manager (/usr/lib/gcc/msp430-elf/VERSION) or built
+# from source (/usr/local/lib/gcc/msp430-elf/VERSION).
+GCCDATA=$(dirname "$(msp430-elf-gcc -print-libgcc-file-name 2>/dev/null)")
+
+# Derive install prefix: 4 levels up from GCCDATA (lib/gcc/msp430-elf/VERSION)
+PREFIX=$(cd "$GCCDATA/../../../.." && pwd)
 LDDIR="$PREFIX/msp430-elf/lib"
 
 echo "==> msp430-elf-gcc $GCC_VER"
 echo "    GCC data dir : $GCCDATA"
 echo "    LD script dir: $LDDIR"
 
+# GCC searches for devices.csv next to the cc1 binary.  On Alpine Linux,
+# cc1 may live in /usr/lib/gcc/msp430-elf/VERSION/ (same as libgcc.a) or
+# in /usr/libexec/gcc/msp430-elf/VERSION/ (separate libexec tree).
+# We write devices.csv to EVERY likely location to avoid path ambiguity.
+CC1_FULL=$(msp430-elf-gcc -print-prog-name=cc1 2>/dev/null || true)
+
+# Always derive the libexec equivalent path and create it.
+# Even if the directory does not yet exist, GCC may resolve cc1 via
+# a symlink whose realpath() lands in libexec rather than lib.
+LIBEXEC_DIR=$(echo "$GCCDATA" | sed 's|/lib/gcc/|/libexec/gcc/|')
+
 mkdir -p "$GCCDATA" "$LDDIR"
+[ "$LIBEXEC_DIR" != "$GCCDATA" ] && mkdir -p "$LIBEXEC_DIR"
+
+# Collect extra directories where we should also place devices.csv
+EXTRA_DIRS=""
+[ "$LIBEXEC_DIR" != "$GCCDATA" ] && EXTRA_DIRS="$LIBEXEC_DIR"
+
+# If -print-prog-name=cc1 returned an absolute path and its directory
+# differs from the ones we already have, add it too.
+case "$CC1_FULL" in
+    /*)
+        CC1_DIR=$(dirname "$CC1_FULL")
+        if [ "$CC1_DIR" != "$GCCDATA" ] && [ "$CC1_DIR" != "$LIBEXEC_DIR" ]; then
+            mkdir -p "$CC1_DIR"
+            EXTRA_DIRS="$EXTRA_DIRS $CC1_DIR"
+        fi ;;
+esac
+
+echo "==> devices.csv will be written to:"
+echo "    $GCCDATA/ (primary)"
+for d in $EXTRA_DIRS; do echo "    $d/ (extra)"; done
 
 # ── devices.csv ───────────────────────────────────────────────────────────────
 # GCC uses this to look up CPU type, MPY support, and clock info.
@@ -31,7 +67,6 @@ mkdir -p "$GCCDATA" "$LDDIR"
 #   MPY : N (none) | 430 (16-bit hw multiply) | 430X (32-bit)
 #   EXPA: N (standard 64KB) | Y (extended memory)
 #   Clk : max DCO frequency in Hz
-echo "==> Writing $GCCDATA/devices.csv ..."
 cat > "$GCCDATA/devices.csv" << 'EOF'
 Name,CPU,MPY,EXPA,Clk
 msp430g2001,430,N,N,16000000
@@ -61,6 +96,18 @@ msp430g2755,430,430,N,16000000
 msp430g2855,430,430,N,16000000
 msp430g2955,430,430,N,16000000
 EOF
+
+# Copy to extra cc1 search directories.
+for d in $EXTRA_DIRS; do
+    cp "$GCCDATA/devices.csv" "$d/devices.csv"
+done
+
+# Confirm the writes.
+echo "==> devices.csv written:"
+ls -la "$GCCDATA/devices.csv" 2>/dev/null && echo "    ✓  $GCCDATA/devices.csv" || echo "    ✗  FAILED: $GCCDATA/devices.csv"
+for d in $EXTRA_DIRS; do
+    ls -la "$d/devices.csv" 2>/dev/null && echo "    ✓  $d/devices.csv" || echo "    ✗  FAILED: $d/devices.csv"
+done
 
 # ── Linker script writer function ─────────────────────────────────────────────
 # Usage: write_ldscript NAME ROM_ORIGIN ROM_LEN_HEX RAM_ORIGIN RAM_LEN_HEX STACK_TOP

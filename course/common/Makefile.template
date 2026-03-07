@@ -14,7 +14,7 @@
 #--- Set this to the stem of your assembly file (without the .s) ---
 TARGET  = program
 
-MCU     = msp430g2552
+MCU     = msp430g2553
 
 #--- Auto-detect which GCC is installed ---
 # Newer toolchain uses msp430-elf-gcc; older Ubuntu uses msp430-gcc
@@ -43,7 +43,7 @@ $(TARGET).elf: $(TARGET).s
 
 #--- Flash target ---
 flash: $(TARGET).elf
-	mspdebug rf2500 "prog $<"
+	mspdebug tilib "prog $<"
 
 #--- Show disassembly ---
 disasm: $(TARGET).elf

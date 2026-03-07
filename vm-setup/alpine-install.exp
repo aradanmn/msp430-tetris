@@ -43,27 +43,48 @@ puts "    Estimated: ~10 minutes\n"
 spawn $QEMU \
     -machine "virt,highmem=on" \
     -accel hvf \
-    -cpu host \
+    -cpu cortex-a57 \
     -smp 2 \
     -m 2048 \
     -drive "if=pflash,format=raw,readonly=on,file=$UEFI_CODE" \
     -drive "if=pflash,format=raw,file=$UEFI_VARS" \
     -drive "file=$DISK,if=virtio,format=raw" \
     -drive "file=$ISO,if=virtio,format=raw,readonly=on" \
-    -netdev "user,id=net0,hostfwd=tcp::2222-:22" \
+    -netdev "user,id=net0,hostfwd=tcp::5022-:22" \
     -device "virtio-net-pci,netdev=net0" \
     -display none \
     -serial stdio \
     -monitor none
 
 # ---------------------------------------------------------------------------
-# Wait for Alpine live login prompt (up to 3 minutes)
+# Wait for Alpine live login prompt (up to 6 minutes).
+#
+# Two cases handled here:
+#   login:   Normal ISO boot — proceed directly.
+#   Shell>   EFI Shell fallback — UEFI found no recognized boot entry so it
+#            opened the interactive shell.  This happens on some firmware/
+#            drive combinations.  We boot the Alpine ISO manually by executing
+#            its UEFI bootloader from the first available filesystem (fs0).
+#            If fs0 fails we try fs1 then fs2 before giving up.
 # ---------------------------------------------------------------------------
-set timeout 180
+set timeout 360
+set efi_boot_tries 0
 expect {
     -re {login:\s*$} { }
+    "Shell>" {
+        incr efi_boot_tries
+        set candidates {fs0 fs1 fs2 fs3}
+        set fs [lindex $candidates [expr {$efi_boot_tries - 1}]]
+        if {$fs eq ""} {
+            puts "\nERROR: EFI Shell — exhausted filesystem candidates."
+            exit 1
+        }
+        puts "    (EFI Shell — trying ${fs}:\\EFI\\BOOT\\BOOTAA64.EFI)"
+        send "${fs}:\\EFI\\BOOT\\BOOTAA64.EFI\r"
+        exp_continue
+    }
     timeout {
-        puts "\nERROR: Alpine did not boot within 3 minutes."
+        puts "\nERROR: Alpine did not boot within 6 minutes."
         exit 1
     }
 }
@@ -267,13 +288,20 @@ puts "==> Post-install: configuring SSH on installed system..."
 send "umount -R /mnt 2>/dev/null; true\r"
 expect "# "
 
-# Find the ext4 root partition (Alpine sys mode uses ext4 for root)
-send {ROOT=$(blkid -t TYPE=ext4 -o device 2>/dev/null | head -1) && echo "root=$ROOT"}
-send "\r"
+# Find the ext4 root partition.
+#
+# Alpine sys mode lays out the disk as:
+#   vda1 = EFI/boot  vda2 = swap  vda3 = root (ext4)
+#
+# blkid -t TYPE=ext4 often returns empty right after installation because
+# the kernel buffer cache hasn't fully settled.  Probe each candidate
+# partition directly instead.
 set timeout 10
+send {ROOT=""; for dev in /dev/vda3 /dev/vda1 /dev/vda4; do blkid "$dev" 2>/dev/null | grep -q 'TYPE="ext4"' && { ROOT="$dev"; break; }; done; echo "root_partition=$ROOT"}
+send "\r"
 expect "# "
 
-send {[ -n "$ROOT" ] && mount "$ROOT" /mnt; true}
+send {[ -n "$ROOT" ] && mount "$ROOT" /mnt && echo "MOUNT_OK" || echo "MOUNT_SKIP: no ext4 found"}
 send "\r"
 expect "# "
 

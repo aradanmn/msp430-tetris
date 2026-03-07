@@ -1,6 +1,6 @@
 #!/bin/sh
 #==============================================================================
-# vm-setup.sh — MSP430G2552 development environment bootstrap
+# vm-setup.sh — MSP430G2553 development environment bootstrap
 #
 # Run this INSIDE the Linux VM (Alpine or Debian/Ubuntu) after first boot.
 # It installs the complete MSP430 toolchain, mspdebug, and configures USB.
@@ -15,7 +15,7 @@ set -e
 
 BANNER="
 ╔══════════════════════════════════════════════════════════╗
-║     MSP430G2552 Development Environment Setup           ║
+║     MSP430G2553 Development Environment Setup           ║
 ╚══════════════════════════════════════════════════════════╝"
 echo "$BANNER"
 
@@ -359,11 +359,11 @@ chmod +x /usr/local/bin/mount-share
 cat > /etc/motd << 'MOTD_EOF'
 
   ╔══════════════════════════════════════════════════════════════╗
-  ║         MSP430G2552 Development Environment Ready           ║
+  ║         MSP430G2553 Development Environment Ready           ║
   ╠══════════════════════════════════════════════════════════════╣
   ║  Course files: ~/msp430-dev-vm/course/                      ║
   ║  Compiler:     msp430-elf-gcc  (or msp430-gcc)              ║
-  ║  Flasher:      mspdebug rf2500                              ║
+  ║  Flasher:      mspdebug tilib                              ║
   ║  Serial:       picocom -b 9600 /dev/ttyACM0                 ║
   ║                                                             ║
   ║  Build:   cd ~/msp430-dev-vm/course/lesson-01-*/examples    ║
@@ -381,19 +381,28 @@ echo ""
 echo "Running quick build test..."
 
 TEST_DIR=$(mktemp -d)
+# Use raw constants — msp430-elf-gcc has no msp430.h header.
+# The course's msp430g2552-defs.s handles all register definitions.
 cat > "$TEST_DIR/test.s" << 'TEST_EOF'
-#include <msp430.h>
+#define WDTPW   0x5A00
+#define WDTHOLD 0x0080
+#define WDTCTL  0x0120
         .text
-        .global main
-main:   mov.w   #(WDTPW|WDTHOLD), &WDTCTL
+        .global _start
+_start:
+        mov.w   #(WDTPW|WDTHOLD), &WDTCTL
 halt:   jmp     halt
+        .section ".vectors","ax",@progbits
+        .word   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        .word   _start
         .end
 TEST_EOF
 
 # Try both compiler names
 for CC in msp430-elf-gcc msp430-gcc; do
     if which $CC >/dev/null 2>&1; then
-        if $CC -mmcu=msp430g2552 -x assembler-with-cpp "$TEST_DIR/test.s" -o "$TEST_DIR/test.elf" 2>/dev/null; then
+        if $CC -mmcu=msp430g2553 -x assembler-with-cpp -nostdlib \
+               "$TEST_DIR/test.s" -o "$TEST_DIR/test.elf" 2>&1; then
             SIZE_OUT=""
             for SZ in msp430-elf-size msp430-size; do
                 if which $SZ >/dev/null 2>&1; then
@@ -402,14 +411,9 @@ for CC in msp430-elf-gcc msp430-gcc; do
                 fi
             done
             echo "  [OK] Test compile succeeded using $CC"
-            [ -n "$SIZE_OUT" ] && echo "       $SIZE_OUT"
+            [ -n "$SIZE_OUT" ] && echo "$SIZE_OUT"
         else
-            echo "  [WARN] Test compile failed with $CC — check include paths"
-            echo "         Trying with explicit include..."
-            if $CC -mmcu=msp430g2552 -x assembler-with-cpp -I/usr/msp430/include "$TEST_DIR/test.s" -o "$TEST_DIR/test.elf" 2>&1; then
-                echo "  [OK] Works with -I/usr/msp430/include"
-                echo "       Add this flag to Makefiles if needed"
-            fi
+            echo "  [WARN] Test compile failed with $CC — see messages above"
         fi
         break
     fi

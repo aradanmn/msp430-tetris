@@ -36,9 +36,13 @@ UEFI_VARS_ORIG="$VM_DIR/efi_vars.fd"
 UEFI_VARS_TMP=/tmp/msp430-efi-vars.fd
 SSH_KEY=/tmp/msp430-key
 QEMU_PID_FILE=/tmp/msp430-qemu.pid
+# Use a fresh temp file for serial log so root-owned stale files can't block us.
+# NOTE: BSD mktemp (macOS) requires Xs at the very end — no suffix allowed.
+rm -f /tmp/vm-serial-XXXXXX.log 2>/dev/null || true   # remove stale bad-mktemp artifact
+VM_SERIAL_LOG=$(mktemp /tmp/vm-serial-XXXXXX)
 
 # SSH / VM settings
-SSH_PORT=2222
+SSH_PORT=5022
 ROOT_PASS=alpine123
 
 # ---------------------------------------------------------------------------
@@ -98,8 +102,11 @@ command -v ssh-keygen >/dev/null || error "ssh-keygen not found"
 [ -f "$SCRIPT_DIR/install-msp430-support.sh" ] \
     || error "install-msp430-support.sh not found in $SCRIPT_DIR"
 
-# Warn if port is already occupied (stale QEMU instance)
-if /usr/bin/nc -z 127.0.0.1 $SSH_PORT 2>/dev/null; then
+# Warn if port is already occupied (stale QEMU instance).
+# Use netstat -an instead of lsof or nc: on macOS 26 (Tahoe), lsof misses
+# system-owned sockets and nc -z returns false positives.  netstat -an
+# shows all listening sockets regardless of owning process.
+if netstat -an 2>/dev/null | grep -qE "^tcp4.*\.$SSH_PORT[[:space:]].*LISTEN"; then
     warn "Port $SSH_PORT is already in use."
     warn "Kill any running QEMU with:  lsof -ti:$SSH_PORT | xargs kill"
     error "Cannot proceed while port $SSH_PORT is occupied."
@@ -110,9 +117,15 @@ echo "  Disk      : $DISK"
 echo "  ISO       : $ISO"
 echo "  QEMU      : $QEMU"
 
-# Keep a pristine blank copy of the EFI vars for retries.
+# Create a zero-filled EFI vars file for Phase 1.
+# Zeroed efi_vars causes EDK2 to reinitialize with factory defaults and scan
+# all attached block devices for \EFI\BOOT\BOOTAA64.EFI — this reliably finds
+# the Alpine ISO without needing a pre-written boot entry.  A copy of the
+# current efi_vars.fd would contain a stale Alpine disk entry that causes UEFI
+# to fail on a fresh/zeroed disk and drop to the EFI Shell instead.
 UEFI_VARS_BLANK=/tmp/msp430-efi-vars-blank.fd
-cp "$UEFI_VARS_ORIG" "$UEFI_VARS_BLANK"
+EFI_SIZE=$(stat -f %z "$UEFI_VARS_ORIG" 2>/dev/null || echo 655360)
+dd if=/dev/zero of="$UEFI_VARS_BLANK" bs="$EFI_SIZE" count=1 2>/dev/null
 
 # ---------------------------------------------------------------------------
 # Step 2: Phase 1 — Alpine Linux installation (alpine-install.exp)
@@ -130,12 +143,18 @@ PHASE1_DONE=0
 for attempt in 1 2 3; do
     if [ "$attempt" -gt 1 ]; then
         warn "Phase 1 attempt $attempt/3 — re-zeroing disk and retrying..."
-        truncate -s 0 "$DISK"
-        truncate -s 20480m "$DISK"
-        cp "$UEFI_VARS_BLANK" "$UEFI_VARS_TMP"
-    else
-        cp "$UEFI_VARS_ORIG" "$UEFI_VARS_TMP"
     fi
+    # Always zero the disk before each attempt.
+    #
+    # With blank efi_vars, UEFI scans all virtio block devices for
+    # \EFI\BOOT\BOOTAA64.EFI.  If the disk has a previous Alpine install its
+    # EFI partition (vda1) contains GRUB and will be found BEFORE the ISO —
+    # UEFI would then boot the old Alpine instead of the installer.  Zeroing
+    # the disk removes the old EFI partition so UEFI falls through to the ISO.
+    truncate -s 0 "$DISK"
+    truncate -s 20480m "$DISK"
+    # Always use zeroed EFI vars so EDK2 scans all drives for BOOTAA64.EFI.
+    cp "$UEFI_VARS_BLANK" "$UEFI_VARS_TMP"
     if /usr/bin/expect "$SCRIPT_DIR/alpine-install.exp" "$UEFI_VARS_TMP" "$DISK" "$ISO"; then
         PHASE1_DONE=1
         break
@@ -165,7 +184,7 @@ step "4/9" "Starting installed VM (no ISO)"
 QEMU_COMMON=(
     -machine "virt,highmem=on"
     -accel hvf
-    -cpu host
+    -cpu cortex-a57
     -smp 2
     -m 2048
     -drive "if=pflash,format=raw,readonly=on,file=$UEFI_CODE"
@@ -174,38 +193,49 @@ QEMU_COMMON=(
     -netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22"
     -device "virtio-net-pci,netdev=net0"
     -display none
-    -serial null
+    -serial "file:$VM_SERIAL_LOG"
     -monitor none
 )
 
-# Redirect QEMU output to a log file — we communicate via SSH in phase 2,
-# not the serial console, so serial can be silenced to avoid interleaving.
+# Redirect QEMU output to a log file.  Serial console goes to vm-serial.log
+# so boot failures can be diagnosed without rerunning the install.
 "$QEMU" "${QEMU_COMMON[@]}" > /tmp/msp430-qemu-boot.log 2>&1 &
 QEMU_PID=$!
 echo "$QEMU_PID" > "$QEMU_PID_FILE"
 info "QEMU started in background (PID $QEMU_PID)"
+info "Serial console log: $VM_SERIAL_LOG"
 
 # ---------------------------------------------------------------------------
-# Step 5: Poll SSH until available (up to 3 minutes)
+# Step 5: Poll SSH until available (up to 5 minutes)
+#
+# Use nc -z to probe the forwarded port.  QEMU's user-mode networking (slirp)
+# refuses the TCP connection until the guest sshd is actually listening on
+# port 22, so nc -z returns false until SSH is genuinely ready.
+#
+# NOTE: netstat does NOT work here — QEMU's NAT socket is not visible in
+# netstat output on macOS 26 (Tahoe), causing the poll to always time out.
 # ---------------------------------------------------------------------------
-step "5/9" "Waiting for Alpine to boot and SSH to start"
+step "5/9" "Waiting for Alpine to boot and SSH to start (up to 5 min)"
 echo -n "  "
-for i in $(seq 1 36); do
-    if /usr/bin/nc -z 127.0.0.1 $SSH_PORT 2>/dev/null; then
+for i in $(seq 1 60); do
+    # Abort early if QEMU crashed
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+        echo ""
+        error "QEMU process died unexpectedly.\n       QEMU log: cat /tmp/msp430-qemu-boot.log\n       VM boot:  cat $VM_SERIAL_LOG"
+    fi
+    if /usr/bin/nc -z -G 2 127.0.0.1 "$SSH_PORT" 2>/dev/null; then
         echo ""
         break
     fi
     echo -n "."
-    if [ "$i" -eq 36 ]; then
+    if [ "$i" -eq 60 ]; then
         echo ""
-        error "SSH did not become available within 3 minutes."
+        error "SSH did not become available within 5 minutes.\n       VM boot log: cat $VM_SERIAL_LOG\n       QEMU log:    cat /tmp/msp430-qemu-boot.log"
     fi
     sleep 5
 done
-# Give sshd time to fully initialize after the port opens.
-# First boot of a fresh Alpine install generates SSH host keys before
-# accepting connections; 3 seconds was too short — use 10.
-sleep 10
+# Give sshd a moment to fully initialize after nc detects it.
+sleep 15
 info "SSH is accepting connections on port $SSH_PORT"
 
 # ---------------------------------------------------------------------------
@@ -392,15 +422,15 @@ echo "  # Boot the VM:"
 cat << 'VERIFY'
   VM=~/Documents/msp430-dev-vm/vm
   /opt/homebrew/bin/qemu-system-aarch64 \
-    -machine virt,highmem=on -accel hvf -cpu host -smp 2 -m 2048 \
+    -machine virt,highmem=on -accel hvf -cpu cortex-a57 -smp 2 -m 2048 \
     -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
     -drive if=pflash,format=raw,file="$VM/efi_vars.fd" \
     -drive file="$VM/msp430-dev.img",if=virtio,format=raw \
-    -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+    -netdev user,id=net0,hostfwd=tcp::5022-:22 \
     -device virtio-net-pci,netdev=net0 -nographic &
 
   # SSH in (password: alpine123, or use your own key):
-  ssh -p 2222 -o StrictHostKeyChecking=no dev@127.0.0.1
+  ssh -p 5022 -o StrictHostKeyChecking=no dev@127.0.0.1
 
   # Inside the VM:
   msp430-elf-gcc --version
@@ -413,3 +443,6 @@ echo "     rsync -av ~/Documents/msp430-dev-vm/course/ dev@<vm-ip>:~/course/"
 echo "  2. Flash firmware (requires LaunchPad USB passthrough):"
 echo "     See CLAUDE.md — run setup-flash.sh inside the VM"
 echo ""
+# Clear any stale ANSI escape sequences (cursor-position-report replies) that
+# the expect script may have left in the terminal's input buffer.
+tput reset 2>/dev/null || true
