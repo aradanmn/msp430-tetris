@@ -95,7 +95,9 @@ cmd_start() {
         echo -e "${BOLD}Starting VM with USB passthrough...${NC}"
         if [ "$(id -u)" -ne 0 ]; then
             echo -e "${YELLOW}USB passthrough requires sudo. Re-running with sudo...${NC}"
-            exec sudo OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES "$0" start --usb
+            # Preserve SSH_AUTH_SOCK so the SSH agent works under sudo
+            exec sudo OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES \
+                 ${SSH_AUTH_SOCK:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} "$0" start --usb
         fi
         export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
     else
@@ -118,7 +120,8 @@ cmd_start() {
         -m 2048 \
         -drive if=pflash,format=raw,readonly=on,file="$UEFI_CODE" \
         -drive if=pflash,format=raw,file="$UEFI_VARS_RUN" \
-        -drive file="$DISK",if=virtio,format=raw \
+        -drive file="$DISK",if=none,format=raw,id=hd0 \
+        -device virtio-blk-pci,drive=hd0,bootindex=0 \
         -netdev user,id=net0,hostfwd=tcp::${SSH_PORT}-:22 \
         -device virtio-net-pci,netdev=net0 \
         ${usb_args[@]+"${usb_args[@]}"} \
