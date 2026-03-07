@@ -55,7 +55,7 @@ Total runtime: **~30 minutes**. Hands-off after launch.
 
 1. Generate temporary SSH keypair
 2. Start VM (no ISO) in background
-3. Poll SSH until available (port 2222)
+3. Poll SSH until available (port 5022)
 4. Inject SSH public key via password auth
 5. Upload `vm-setup.sh` + `install-msp430-support.sh`
 6. Run `vm-setup.sh` — installs `gcc-msp430`, `msp430-libc`, `binutils-msp430` from Alpine community repo; builds `mspdebug` from source; creates `dev` user with passwordless sudo
@@ -73,11 +73,11 @@ VM=~/Documents/msp430-dev-vm/vm
   -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
   -drive if=pflash,format=raw,file="$VM/efi_vars.fd" \
   -drive file="$VM/msp430-dev.img",if=virtio,format=raw \
-  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+  -netdev user,id=net0,hostfwd=tcp::5022-:22 \
   -device virtio-net-pci,netdev=net0 -nographic &
 
 # SSH in (root password: alpine123, or use dev user)
-ssh -p 2222 -o StrictHostKeyChecking=no dev@127.0.0.1
+ssh -p 5022 -o StrictHostKeyChecking=no dev@127.0.0.1
 ```
 
 ---
