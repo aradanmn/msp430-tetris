@@ -157,6 +157,10 @@ for attempt in 1 2 3; do
     cp "$UEFI_VARS_BLANK" "$UEFI_VARS_TMP"
     if /usr/bin/expect "$SCRIPT_DIR/alpine-install.exp" "$UEFI_VARS_TMP" "$DISK" "$ISO"; then
         PHASE1_DONE=1
+        # Flush stale ANSI cursor-position-report responses the expect script
+        # left queued in the terminal input buffer.
+        read -r -d '' -t 0.1 < /dev/tty 2>/dev/null || true
+        stty sane 2>/dev/null || true
         break
     fi
     [ "$attempt" -lt 3 ] || error "Phase 1 failed after 3 attempts. Check the output above."
@@ -369,6 +373,32 @@ info "vm-setup.sh complete."
 # vm-setup.sh creates the 'dev' user — now move setup-flash.sh to their home
 run_ssh "mv /tmp/setup-flash.sh /home/dev/setup-flash.sh && chown dev:dev /home/dev/setup-flash.sh && chmod +x /home/dev/setup-flash.sh"
 
+# Inject the user's SSH keys for the dev user so ./vm.sh ssh works.
+# Collect ALL public keys: agent keys + key files. The user may have a
+# passphrase-protected key that only the agent can provide.
+USER_KEYS=""
+# Agent keys first (these are the keys actually usable without a passphrase prompt)
+if command -v ssh-add >/dev/null 2>&1; then
+    AGENT_KEYS=$(ssh-add -L 2>/dev/null || true)
+    [ -n "$AGENT_KEYS" ] && USER_KEYS="$AGENT_KEYS"
+fi
+# Also add key files (may overlap with agent — duplicates are harmless)
+for kf in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub" "$HOME/.ssh/id_ecdsa.pub"; do
+    if [ -f "$kf" ]; then
+        USER_KEYS="${USER_KEYS:+${USER_KEYS}
+}$(cat "$kf")"
+    fi
+done
+if [ -n "$USER_KEYS" ]; then
+    # Write all keys, then deduplicate
+    ESCAPED_KEYS=$(echo "$USER_KEYS" | sort -u | sed "s/'/'\\\\''/g")
+    run_ssh "mkdir -p /home/dev/.ssh && chmod 700 /home/dev/.ssh && echo '$ESCAPED_KEYS' > /home/dev/.ssh/authorized_keys && chmod 600 /home/dev/.ssh/authorized_keys && chown -R dev:dev /home/dev/.ssh"
+    KEY_COUNT=$(echo "$USER_KEYS" | sort -u | wc -l | tr -d ' ')
+    info "Injected $KEY_COUNT SSH key(s) for dev user."
+else
+    warn "No SSH public key found in ~/.ssh/ or agent — you'll need to set up dev access manually."
+fi
+
 # ---------------------------------------------------------------------------
 # Step 8b: Run install-msp430-support.sh (<1 min)
 #   - Writes linker scripts for msp430g2552, g2553, g2452, g2512, etc.
@@ -411,6 +441,14 @@ fi
 # ---------------------------------------------------------------------------
 # Done!
 # ---------------------------------------------------------------------------
+
+# Clear stale ANSI escape sequences (cursor-position-report replies) that
+# the expect script left queued in the terminal's input buffer.
+# These show up as garbage like "5;1R5;11R..." after the script ends.
+# Drain queued input, then reset terminal line discipline.
+read -r -d '' -t 0.2 < /dev/tty 2>/dev/null || true
+stty sane 2>/dev/null || true
+
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}║  Setup complete! Alpine + MSP430 toolchain installed.   ║${NC}"
@@ -419,30 +457,19 @@ echo ""
 echo "Verify the toolchain works:"
 echo ""
 echo "  # Boot the VM:"
-cat << 'VERIFY'
-  VM=~/Documents/msp430-dev-vm/vm
-  /opt/homebrew/bin/qemu-system-aarch64 \
-    -machine virt,highmem=on -accel hvf -cpu cortex-a57 -smp 2 -m 2048 \
-    -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
-    -drive if=pflash,format=raw,file="$VM/efi_vars.fd" \
-    -drive file="$VM/msp430-dev.img",if=virtio,format=raw \
-    -netdev user,id=net0,hostfwd=tcp::5022-:22 \
-    -device virtio-net-pci,netdev=net0 -nographic &
-
-  # SSH in (password: alpine123, or use your own key):
-  ssh -p 5022 -o StrictHostKeyChecking=no dev@127.0.0.1
-
-  # Inside the VM:
-  msp430-elf-gcc --version
-  mspdebug --version
-VERIFY
+echo "  ./vm.sh start"
+echo ""
+echo "  # SSH in:"
+echo "  ./vm.sh ssh"
+echo ""
+echo "  # Inside the VM:"
+echo "  msp430-elf-gcc --version"
+echo "  mspdebug --version"
 echo ""
 echo "Next steps:"
 echo "  1. Sync course files to VM:"
-echo "     rsync -av ~/Documents/msp430-dev-vm/course/ dev@<vm-ip>:~/course/"
+echo "     rsync -av ~/Documents/msp430-dev-vm/course/ dev@127.0.0.1:~/course/ -e 'ssh -p 5022'"
 echo "  2. Flash firmware (requires LaunchPad USB passthrough):"
+echo "     ./vm.sh start --usb"
 echo "     See CLAUDE.md — run setup-flash.sh inside the VM"
 echo ""
-# Clear any stale ANSI escape sequences (cursor-position-report replies) that
-# the expect script may have left in the terminal's input buffer.
-tput reset 2>/dev/null || true
