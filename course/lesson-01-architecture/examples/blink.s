@@ -24,6 +24,9 @@
 ; _start — runs once on power-up or reset
 ;==============================================================================
 _start:
+    ; --- 0. Initialize Stack Pointer ---
+    mov.w   #0x0400, SP
+    
     ; --- 1. Stop the watchdog timer ---
     ; The WDT resets the chip after ~32 ms if not serviced. Stop it now.
     ; The upper byte must be the password (0x5A); lower byte = WDTHOLD.
@@ -42,13 +45,24 @@ _start:
 
     ; --- 4. Start with LED off ---
     bic.b   #LED1, &P1OUT               ; P1.0 → LOW → LED off
+    
+    ; --- 5. Configure LED2 (P1.6) as output ---
+    ; P1DIR: 0 = input, 1 = output. We only change bit 0 using BIS.
+    bis.b   #LED2, &P1DIR               ; P1.6 -> output
+    
+    ; --- 6. Start with LED off ---
+    bis.b   #LED2, &P1OUT               ; P1.6 -> LOW -> LED off
 
 ;==============================================================================
 ; main_loop — toggle LED1 every 500 ms (= 1 Hz)
 ;==============================================================================
 main_loop:
-    xor.b   #LED1, &P1OUT               ; flip LED1 (on→off or off→on)
-
+;    xor.b   #LED1, &P1OUT               ; flip LED1 (on→off or off→on)
+;    xor.b   #LED2, &P1OUT               ; flip LED2 (off->on or on->off)
+    
+    ; Toggle BOTH pins at the exact same instant.
+    xor.b   #(LED1|LED2), &P1OUT
+    
     mov.w   #500, R12                   ; delay 500 ms
     call    #delay_ms
 

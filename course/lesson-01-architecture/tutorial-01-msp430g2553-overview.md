@@ -130,6 +130,7 @@ bit.b   #BIT3, &P1IN    ; Test bit 3 of P1IN (sets Z flag, no write)
 
 **Jumps and calls:**
 
+
 ```asm
 jmp     loop            ; Unconditional jump
 jz      done            ; Jump if Z flag = 1 (result was zero)
@@ -150,6 +151,74 @@ ret                     ; Return from subroutine (pop PC)
 | Indirect | `@R5` | The memory address stored in R5 |
 
 The `&` prefix means "the memory location at this address." You'll use it for every peripheral register access.
+
+---
+
+## Hex Values and Bit Positions
+
+Peripheral registers are controlled bit by bit. Understanding how a hex constant maps to individual bits is essential for reading any MSP430 program.
+
+### Each power of two is exactly one bit
+
+```
+Hex    Binary      Bit position
+0x01 = 0000 0001   bit 0
+0x02 = 0000 0010   bit 1
+0x04 = 0000 0100   bit 2
+0x08 = 0000 1000   bit 3
+0x10 = 0001 0000   bit 4
+0x20 = 0010 0000   bit 5
+0x40 = 0100 0000   bit 6
+0x80 = 1000 0000   bit 7
+```
+
+That's why `BIT0 = 0x01`, `BIT6 = 0x40`, etc. — each is 2 raised to the bit-position number. To find which bit a hex constant sets, find which power of two it equals.
+
+### OR combines multiple bits without conflict
+
+When you see `#(WDTPW|WDTHOLD)`, the `|` is bitwise OR. Each bit stays independent — ORing masks together sets all their bits at once:
+
+```
+WDTPW   = 0x5A00 = 0101 1010 0000 0000   upper byte = password 0x5A
+WDTHOLD = 0x0080 = 0000 0000 1000 0000   bit 7 = stop the watchdog
+
+WDTPW | WDTHOLD
+        = 0x5A80 = 0101 1010 1000 0000
+                   ─────────             password still in upper byte
+                             ─           bit 7 set = watchdog stopped
+```
+
+No bit in one constant overwrites a bit from the other — every 1 from either mask becomes a 1 in the result.
+
+### BIS and BIC only touch the bits you name
+
+`bis.b` and `bic.b` affect only the bits that are 1 in the mask; all other bits in the register are left alone. This matters because one register controls multiple things simultaneously:
+
+```asm
+; P1DIR currently = 0100 0000  (P1.6 was already an output for LED2)
+bis.b   #BIT0, &P1DIR       ; set bit 0 only — leave everything else
+; P1DIR is now  = 0100 0001   (P1.0 AND P1.6 are both outputs)
+
+bic.b   #BIT6, &P1DIR       ; clear bit 6 only
+; P1DIR is now  = 0000 0001   (only P1.0 remains an output)
+```
+
+If you used `mov.b #BIT0, &P1DIR` instead of `bis.b`, it would overwrite the whole register — clearing P1.6 as a side effect.
+
+### 16-bit registers use the same pattern, extended to two bytes
+
+For 16-bit registers like TACTL or WDTCTL, bit 0 is still the rightmost, bit 15 the leftmost. Multi-field values are still just OR'd together:
+
+```asm
+mov.w   #(TASSEL_2|MC_1|TACLR), &TACTL
+; TASSEL_2 = 0x0200 = 0000 0010 0000 0000   bit 9  = SMCLK source
+; MC_1     = 0x0010 = 0000 0000 0001 0000   bit 4  = Up mode
+; TACLR    = 0x0004 = 0000 0000 0000 0100   bit 2  = clear counter
+;            ─────────────────────────────
+;            0x0214 = 0000 0010 0001 0100   all three at once
+```
+
+The `msp430g2553-defs.s` file has bit-position comments and register layout diagrams for every peripheral — refer to it whenever a hex value looks mysterious.
 
 ---
 
@@ -190,10 +259,13 @@ Every `.s` file in this course follows the same skeleton:
     .global _start
 
 _start:
-    ; 1. Disable the watchdog timer (ALWAYS first — it resets the chip if not fed)
+    ; 1. Initialize the Stack Pointer (ALWAYS first when using call/ret)
+    mov.w   #0x0400, SP                 ; top of RAM = 0x0400 (one past 0x03FF)
+
+    ; 2. Disable the watchdog timer
     mov.w   #(WDTPW|WDTHOLD), &WDTCTL
 
-    ; 2. Calibrate the DCO to 1 MHz
+    ; 3. Calibrate the DCO to 1 MHz
     clr.b   &DCOCTL
     mov.b   &CALBC1_1MHZ, &BCSCTL1
     mov.b   &CALDCO_1MHZ, &DCOCTL
@@ -208,16 +280,19 @@ main_loop:
 
 ; --- Interrupt vector table at bottom ---
     .section ".vectors","ax",@progbits
-    .org    0x001E          ; offset to Reset vector within the section
-    .word   _start          ; 0xFFFE → jump to _start on reset
+    .word   0,0,0,0, 0,0,0,0            ; 0xFFE0–0xFFEF  unused vectors
+    .word   0,0,0,0, 0,0,0              ; 0xFFF0–0xFFFC  unused vectors
+    .word   _start                      ; 0xFFFE  Reset — CPU jumps here on power-up
     .end
 ```
 
-Two things you must **always** do at the very start:
+Three things you must **always** do at the very start:
 
-1. **Disable the watchdog** — the WDT is a hardware timer that resets the chip if you don't service it. We hold it (stop it) with `mov.w #(WDTPW|WDTHOLD), &WDTCTL`. In the game project we'll eventually use it as an interval timer, but for now we stop it.
+1. **Initialize the Stack Pointer** — with `-nostdlib` there is no C runtime to set up SP for you. `call` and `ret` use the stack to save and restore the return address. Without a valid SP, the first `call` pushes the return address to a garbage location and `ret` jumps to a garbage address, crashing the chip. Set SP to `0x0400` — one byte past the top of RAM (0x03FF), because the stack grows downward and SP points to the last value pushed.
 
-2. **Calibrate the DCO** — the internal oscillator runs at a random frequency from the factory. The three-line calibration sequence loads TI's factory-measured values to hit exactly 1 MHz.
+2. **Disable the watchdog** — the WDT is a hardware timer that resets the chip if you don't service it. We hold it (stop it) with `mov.w #(WDTPW|WDTHOLD), &WDTCTL`. In the game project we'll eventually use it as an interval timer, but for now we stop it.
+
+3. **Calibrate the DCO** — the internal oscillator runs at an imprecise frequency from the factory. The three-line calibration sequence loads TI's factory-measured values from Info Flash to hit exactly 1 MHz.
 
 ---
 
