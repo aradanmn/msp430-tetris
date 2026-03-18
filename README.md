@@ -1,21 +1,21 @@
 # MSP430 Development Projects
 
-Two projects using the MSP430 microcontroller family, targeting the TI MSP-EXP430G2 LaunchPad on Apple Silicon (M1/M2/M3 Mac).
+Two projects using the MSP430 microcontroller family, targeting the TI MSP-EXP430G2 LaunchPad. Build and flash natively on macOS — no VM required.
 
 ---
 
 ## Projects
 
-### 1. MSP430G2552 Assembly Course (`course/`)
+### 1. MSP430G2553 Assembly Course (`course/`)
 
-A complete 16-lesson MSP430 assembly programming course with a Linux VM setup for building and flashing.
+A complete 16-lesson MSP430 assembly programming course. Builds and flashes natively on macOS.
 
 - **16 lessons** — GPIO, interrupts, timers, ADC, UART, SPI, I2C, low-power modes
 - **Each lesson** — 2 tutorials, 1 working example, 3 exercises with solutions
 - **Capstone** — Smart environment monitor integrating all peripherals
-- **VM** — Alpine Linux on QEMU (automated setup via `vm-setup/`)
+- **Setup** — `./setup-mac.sh` (installs toolchain via Homebrew, ~2 min)
 
-[Course README](course/README.md) · [VM Setup README](vm-setup/README.md)
+[Course README](course/README.md)
 
 ### 2. MSP430G2553 Handheld Console (`handheld-msp430/`)
 
@@ -41,4 +41,4 @@ Design decisions and conversation summaries are in [`docs/sessions/`](docs/sessi
 
 ## Hardware
 
-Both projects target the **MSP-EXP430G2 Rev 1.5** LaunchPad with the eZ-FET lite debugger (USB VID:PID `2047:0013`). Use `mspdebug tilib` (not `rf2500`) for flashing.
+Both projects target the **MSP-EXP430G2 Rev 1.5** LaunchPad with the eZ-FET lite debugger (USB VID:PID `2047:0013`). Flash with `mspdebug ezfet` (via `make flash` or directly).

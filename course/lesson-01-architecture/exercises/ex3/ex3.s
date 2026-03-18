@@ -23,7 +23,17 @@
     .text
     .global _start
 
+;==============================================================================
+; Timing constants (milliseconds)
+;==============================================================================
+.equ    T_DOT,          150     ; dot on-time
+.equ    T_DASH,         450     ; dash on-time (3× dot)
+.equ    T_SYMBOL_GAP,   150     ; off-time between symbols in same letter
+.equ    T_LETTER_GAP,   450     ; off-time between letters (150 + 300 extra)
+.equ    T_WORD_GAP,     1000    ; off-time after full SOS before repeating
+
 _start:
+    mov.w   #0x0400, SP
     mov.w   #(WDTPW|WDTHOLD), &WDTCTL
     clr.b   &DCOCTL
     mov.b   &CALBC1_1MHZ, &BCSCTL1
@@ -34,19 +44,59 @@ _start:
 
 main_loop:
     ; TODO: transmit S  (three dots)
-
+    call #dot
+    call #dot
+    call #dot
     ; TODO: gap between S and O (300 ms extra = 450 ms total inter-letter gap)
-
+    mov.w #300, R12
+    call #delay_ms
     ; TODO: transmit O  (three dashes)
-
+    call #dash
+    call #dash
+    call #dash
     ; TODO: gap between O and S
-
+    mov.w   #300, R12
+    call    #delay_ms
     ; TODO: transmit S  (three dots)
-
+    call #dot
+    call #dot
+    call #dot
     ; TODO: end-of-word pause (1000 ms)
-
+    mov.w   #850, R12
+    call    #delay_ms
+    
     jmp     main_loop
+    
+    
+;==============================================================================
+; dot - flash LED1 for T_DOT ms, then pause T_SYMBOL_GAP ms
+;==============================================================================
+dot:
+    bis.b #LED1, &P1OUT
+    mov.w #T_DOT, R12
+    call #delay_ms
+    
+    bic.b #LED1, &P1OUT
+    mov.w #T_SYMBOL_GAP, R12
+    call #delay_ms
+    ret
 
+;==============================================================================
+; dash — flash LED1 for T_DASH ms, then pause T_SYMBOL_GAP ms
+;==============================================================================
+dash:
+    bis.b   #LED1, &P1OUT
+    mov.w   #T_DASH, R12
+    call    #delay_ms
+
+    bic.b   #LED1, &P1OUT
+    mov.w   #T_SYMBOL_GAP, R12
+    call    #delay_ms
+    ret
+
+;==============================================================================
+; delay_ms — wait approximately R12 milliseconds
+;==============================================================================
 delay_ms:
     mov.w   #333, R13
 .Ldms_inner:

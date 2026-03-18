@@ -25,7 +25,7 @@ _start:
 main_loop:
     xor.b   #LED1, &P1OUT
 
-    mov.w   #500, R12               ; TODO: change this value
+    mov.w   #125, R12               ; TODO: change this value
     call    #delay_ms
 
     jmp     main_loop

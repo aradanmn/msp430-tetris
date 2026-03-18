@@ -7,7 +7,7 @@ Build a Game Boy-style handheld running Tetris, one lesson at a time. Every less
 | Component | Part | ~Cost |
 |-----------|------|-------|
 | MCU | MSP-EXP430G2 LaunchPad (MSP430G2553) | ~$10 |
-| Display | 0.96" OLED 128×64 SPI (SSD1306) | ~$4 |
+| Display | 2.42" OLED 128×64 SPI (SSD1309, Adafruit #2719) | ~$18 |
 | Buttons | SN74HC165N 8-bit parallel-in shift register × 1 | ~$1 |
 | Audio | LM386N-1 audio amp + 8Ω speaker | ~$3 |
 | Power | Adafruit 4410 USB-C LiPo charger + 3.7V 2Ah LiPo | ~$15 |

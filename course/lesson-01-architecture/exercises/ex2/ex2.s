@@ -20,6 +20,9 @@
     .global _start
 
 _start:
+    ; --- 0. Initialize Stack Pointer ---
+    mov.w   #0x0400, SP
+
     mov.w   #(WDTPW|WDTHOLD), &WDTCTL
 
     clr.b   &DCOCTL
@@ -27,14 +30,27 @@ _start:
     mov.b   &CALDCO_1MHZ, &DCOCTL
 
     ; TODO: configure both LED1 and LED2 as outputs
+    bis.b #(LED1|LED2), &P1DIR
 
     ; TODO: set initial state: LED1 ON, LED2 OFF
+    bis.b #LED1, &P1OUT
+    bic.b #LED2, &P1OUT
 
 main_loop:
     ; TODO: phase A — LED1 ON, LED2 OFF, wait 250 ms
-
+    bis.b #LED1, &P1OUT
+    bic.b #LED2, &P1OUT
+    
+    mov.w #250, R12     ; delay 250ms
+    call #delay_ms
+    
     ; TODO: phase B — LED1 OFF, LED2 ON, wait 250 ms
-
+    bic.b #LED1, &P1OUT
+    bis.b #LED2, &P1OUT
+    
+    mov.w #250, R12
+    call #delay_ms
+    
     jmp     main_loop
 
 delay_ms:
