@@ -1,7 +1,9 @@
-# Claude internal files
+# Claude internal files — track memory, ignore everything else
 CLAUDE.md
 handheld-msp430/CLAUDE.md
-.claude/
+.claude/*
+!.claude/memory/
+!.claude/memory/**
 
 # Junk / scratch files
 test.txt
