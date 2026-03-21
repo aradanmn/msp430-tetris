@@ -171,29 +171,39 @@ Build a Game Boy-style handheld running Tetris, one lesson at a time. Every less
 
 ## Repo Organization
 
+Single repo: **github.com/aradanmn/msp430-tetris**
+
 ```
-msp430-dev-vm/          ← github.com/aradanmn/msp430-dev-vm
-├── ROADMAP.md          ← this file
+msp430-tetris/
+├── ROADMAP.md              ← this file
+├── CLAUDE.md               ← AI assistant context
+├── README.md
+├── setup-mac.sh            ← one-time macOS toolchain install
+├── build-libmsp430.sh      ← builds libmsp430.dylib for mspdebug
 ├── course/
-│   ├── common/         ← shared defs, Makefile.template
+│   ├── common/             ← msp430g2553-defs.s, Makefile.template
 │   ├── lesson-01-architecture/
 │   │   ├── README.md
 │   │   ├── tutorial-01-*.md
-│   │   ├── examples/   ← working demo
-│   │   └── exercises/  ← problems + solutions
-│   └── ... (lesson-02 through lesson-20)
-├── journal/            ← session-by-session learning log
-│   └── 2026-03-07_session-01_kickoff.md
+│   │   ├── examples/       ← working demo (make flash)
+│   │   └── exercises/      ← problems + solutions
+│   ├── lesson-02-gpio-patterns/
+│   ├── lesson-03-gpio-input/
+│   ├── lesson-04-timer-a/
+│   ├── review-01-02/
+│   └── ... (lesson-05 through lesson-20)
 ├── docs/
-│   └── hardware/       ← wiring guides per phase
-├── course-legacy/      ← archived original 16-lesson course
-└── sync.sh             ← push both repos to GitHub
-
-Handheld-MSP430/        ← github.com/aradanmn/Handheld-MSP430
-├── schematic/          ← KiCad files
-├── breadboard/         ← wiring guide, layout
-├── bom/                ← bill of materials
-└── firmware/ → points to msp430-dev-vm course
+│   ├── bom-flat.md         ← single-table order sheet
+│   ├── bom-structured.md   ← BOM organised by build phase
+│   └── hardware/
+│       ├── phase-1-launchpad-only.md
+│       ├── phase-2-oled-display.md
+│       ├── phase-3-buttons-shift-register.md
+│       ├── phase-4-audio.md
+│       ├── schematic/      ← KiCad schematic (msp430_gameboy.kicad_sch)
+│       ├── breadboard/     ← full assembled board guide + SVG layout
+│       └── scripts/        ← KiCad schematic generators
+└── journal/                ← session-by-session learning log
 ```
 
 ---
