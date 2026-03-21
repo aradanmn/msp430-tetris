@@ -7,7 +7,7 @@ Build a Game Boy-style handheld running Tetris, one lesson at a time. Every less
 | Component | Part | ~Cost |
 |-----------|------|-------|
 | MCU | MSP-EXP430G2 LaunchPad (MSP430G2553) | ~$10 |
-| Display | 2.42" OLED 128×64 SPI (SSD1309, Adafruit #2719) | ~$18 |
+| Display | 2.7" OLED 128×64 SPI grayscale (SSD1325, Adafruit #2674) | ~$50 |
 | Buttons | SN74HC165N 8-bit parallel-in shift register × 1 | ~$1 |
 | Audio | LM386N-1 audio amp + 8Ω speaker | ~$3 |
 | Power | Adafruit 4410 USB-C LiPo charger + 3.7V 2Ah LiPo | ~$15 |
@@ -52,9 +52,9 @@ Build a Game Boy-style handheld running Tetris, one lesson at a time. Every less
 ---
 
 ## Phase 2 — Display (Lessons 6–10)
-*Hardware: Add 0.96" SSD1306 OLED (SPI) + breadboard*
+*Hardware: Add 2.7" SSD1325 OLED (SPI, 16-level grayscale) + breadboard*
 
-**What to add:** Wire SSD1306 to P1.5 (SCLK), P1.7 (MOSI), P2.0 (CS), P2.1 (DC), P2.2 (RST). 3.3V from LaunchPad.
+**What to add:** Wire SSD1325 to P1.5 (SCLK), P1.7 (MOSI), P2.0 (CS), P2.1 (DC), P2.2 (RST). 3.3V from LaunchPad.
 
 **Lesson 06 — Timer A & Game Tick**
 - Timer A modes: stop, up, continuous, up/down
@@ -71,19 +71,19 @@ Build a Game Boy-style handheld running Tetris, one lesson at a time. Every less
 **Lesson 08 — SPI with USCI_B0**
 - USCI_B0 SPI master setup (CPOL=0, CPHA=0, MSB first)
 - `spi_write_byte` subroutine
-- Chip-select protocol, DC pin for SSD1306
+- Chip-select protocol, DC pin for SSD1325
 - *Game connection:* every pixel sent to the display goes through this
 
-**Lesson 09 — SSD1306 OLED Driver**
-- SSD1306 initialization sequence (21 commands)
-- Page-addressing mode, column/page addressing
-- `oled_clear`, `oled_set_pixel`, `oled_flush`
-- *Game connection:* draw a single pixel — foundation for everything visual
+**Lesson 09 — SSD1325 OLED Driver**
+- SSD1325 initialization sequence and grayscale mode setup
+- Row/column addressing, 4 bits/pixel (16 gray levels)
+- `oled_clear`, `oled_set_pixel(x, y, gray)`, `oled_flush`
+- *Game connection:* draw a single pixel at a gray level — foundation for everything visual
 
 **Lesson 10 — Drawing Primitives**
-- Framebuffer in RAM (128×64 / 8 = 1024 bytes = 2× the MSP430's RAM!)
-- Column-based partial update strategy to fit in 512 B RAM
-- Draw filled rectangle, draw horizontal/vertical line
+- Framebuffer strategy: SSD1325 full buffer = 4096 bytes (8× MSP430 RAM)
+- Column-stripe partial update using external SRAM as backing store
+- Draw filled rectangle, horizontal/vertical line, with gray level parameter
 - *Game connection:* draw the Tetris board border and a single tetromino block
 
 ---
