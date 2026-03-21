@@ -1,5 +1,5 @@
 # MSP430 Handheld Gaming Console — Structured BOM (Multi-Level)
-_Revision: C — 2026-03-21_
+_Revision: D — 2026-03-21_
 
 A structured (multi-level) BOM expresses the product as a parent-child hierarchy. Each sub-assembly is broken down into its constituent components. **Qty** is per-parent (not aggregate) — to get total procurement quantities see `bom-flat.md`.
 
@@ -11,16 +11,17 @@ Level key: **L0** = top-level assembly · **L1** = sub-assembly · **L2** = purc
 
 | Lvl | Item # | Assembly / Part | Manufacturer | MPN | Qty | UOM | Unit Price | Notes |
 |-----|--------|----------------|-------------|-----|-----|-----|------------|-------|
-| L0 | — | **MSP430 Handheld Gaming Console** | — | — | 1 | EA | — | Top-level assembly |
+| L0 | — | **MSP430 Handheld Gaming Console** | — | — | 1 | EA | — | Top-level assembly (Rev D, Prototype) |
 | L1 | 1.0 | → MCU & Programming Module | — | — | 1 | EA | — | |
 | L2 | 1.1 | → → LaunchPad MSP430G2553 dev board | Texas Instruments | MSP-EXP430G2ET | 1 | EA | $10.00 | Includes eZ-FET debugger, LED1/LED2, button S2 |
 | L1 | 2.0 | → Display Module | — | — | 1 | EA | — | |
 | L2 | 2.1 | → → 2.7" SSD1325 grayscale OLED SPI | Adafruit | #2674 | 1 | EA | $49.95 | 128×64, 16 gray levels, 3.3V SPI. Adafruit only. |
 | L1 | 3.0 | → Memory Module | — | — | 1 | EA | — | Shared SPI bus (USCI_B0) |
 | L2 | 3.1 | → → 128KB SPI SRAM (DIP-8) | Microchip | 23LC1024-I/P | 1 | EA | $2.50 | Framebuffer store + game state RAM |
-| L2 | 3.2 | → → 4MB SPI NOR Flash (DIP-8) | Winbond | W25Q32JVDIQ | 1 | EA | $0.75 | Sprites, music sequences, save data. DIP-8 breadboard-compatible. Verify distributor stock. Final PCB may require different package. |
-| L2 | 3.3 | → → Capacitor, 0.1µF 50V ceramic (SRAM bypass) | Kemet | C320C104M5R5TA | 1 | EA | $0.10 | Place on SRAM VCC pin |
-| L2 | 3.4 | → → Capacitor, 0.1µF 50V ceramic (Flash bypass) | Kemet | C320C104M5R5TA | 1 | EA | $0.10 | Place on Flash VCC pin |
+| L2 | 3.2 | → → 4MB SPI NOR Flash (SOIC-8) | Winbond | W25Q32JVSSIQ | 1 | EA | $0.75 | Sprites, music sequences, save data. SOIC-8 package — requires adapter (3.3) for breadboard. |
+| L2 | 3.3 | → → SOIC-8 to DIP-8 SMD adapter breakout | — | — | 1 | EA | $1.50 | Required for breadboarding W25Q32JVSSIQ. Adafruit #1212. |
+| L2 | 3.4 | → → Capacitor, 0.1µF 50V ceramic (SRAM bypass) | Kemet | C320C104M5R5TA | 1 | EA | $0.10 | Place on SRAM VCC pin |
+| L2 | 3.5 | → → Capacitor, 0.1µF 50V ceramic (Flash bypass) | Kemet | C320C104M5R5TA | 1 | EA | $0.10 | Place on Flash VCC pin |
 | L1 | 4.0 | → Input Module | — | — | 1 | EA | — | SPI shift register + 8 buttons |
 | L2 | 4.1 | → → 8-bit parallel-in shift register (DIP-16) | Texas Instruments | SN74HC165N | 1 | EA | $0.80 | Latches 8 button states in one SPI read |
 | L2 | 4.2 | → → Tactile button, 6mm, 160gf (DIP-4) | Omron | B3F-1000 | 8 | EA | $0.20 | Left, Right, Down, Rotate CW, Rotate CCW, Drop, Start, Pause |
