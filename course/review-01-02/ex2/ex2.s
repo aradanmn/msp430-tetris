@@ -67,23 +67,66 @@ _start:
 main_loop:
     ; --- S (dot dot dot) ---
     ; TODO: three dots with symbol gaps between them, then a letter gap
-
+    call #dot
+    call #sym_gap
+    call #dot
+    call #sym_gap
+    call #dot
+    call #let_gap
 
     ; --- O (dash dash dash) ---
     ; TODO: three dashes with symbol gaps between them, then a letter gap
-
+    call #dash
+    call #sym_gap
+    call #dash
+    call #sym_gap
+    call #dash
+    call #let_gap
 
     ; --- S (dot dot dot) ---
     ; TODO: three dots with symbol gaps between them, then a word gap
-
-
+    call #dot
+    call #sym_gap
+    call #dot
+    call #sym_gap
+    call #dot
+    call #word_gap
     jmp     main_loop
 
 ; TODO: implement dot, dash, sym_gap, let_gap, word_gap below
 ; Each subroutine should load R12 and call delay_ms — nothing else.
-
-
-
+dot:
+    mov.w #T_DOT, R12
+    bis.b #LED1, &P1OUT
+    call #delay_ms
+    bic.b #LED1, &P1OUT
+    ret
+    
+dash:
+    mov.w #T_DASH, R12
+    bis.b #LED1, &P1OUT
+    call #delay_ms
+    bic.b #LED1, &P1OUT
+    ret
+    
+sym_gap:
+    bic.b #LED1, &P1OUT
+    mov.w #T_SYM_GAP, R12
+    call #delay_ms
+    ret
+    
+let_gap:
+    bic.b #LED1, &P1OUT
+    mov.w #T_LET_GAP, R12
+    call #delay_ms
+    ret
+    
+word_gap:
+    bic.b #LED1, &P1OUT
+    mov.w #T_WORD_GAP, R12
+    call #delay_ms
+    ret
+    
 delay_ms:
     mov.w   #333, R13
 .Ldms_inner:

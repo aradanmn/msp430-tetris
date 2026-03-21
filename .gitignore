@@ -1,9 +1,4 @@
-# VM disk and firmware images — too large for git
-vm/*.img
-vm/*.iso
-vm/*.fd
-
-# Claude Code internal files
+# Claude internal files
 CLAUDE.md
 handheld-msp430/CLAUDE.md
 .claude/

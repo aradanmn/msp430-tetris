@@ -41,10 +41,10 @@
 ;   ARMED_COUNT     — number of armed pulses per phase (5)
 ;   ALARM_HALF_MS   — half-period for each alarm alternation (80)
 ;   ALARM_COUNT     — number of LED1/LED2 alternating pairs per phase (8)
-.equ #400,  ARMED_HALF_MS
-.equ #5,    ARMED_COUNT
-.equ #80,   ALARM_HALF_MS
-.equ #8,    ALARM_COUNT
+.equ ARMED_HALF_MS, 400
+.equ ARMED_COUNT, 5
+.equ ALARM_HALF_MS, 80
+.equ ALARM_COUNT, 8
 
 _start:
     mov.w   #0x0400, SP
@@ -58,12 +58,12 @@ _start:
 
 main_loop:
     ; TODO: load ARMED_COUNT into R5, call armed_pulse
-    mov.w ARMED_COUNT, R5
+    mov.w #ARMED_COUNT, R5
     call #armed_pulse
     ; TODO: load ALARM_COUNT into R7, call alarm_burst
-    mov.w ALARM_COUNT, R7
+    mov.w #ALARM_COUNT, R7
     call #alarm_burst
-    jmp     main_loop
+    jmp main_loop
 
 
 ; TODO: implement armed_pulse
@@ -73,26 +73,33 @@ armed_pulse:
 
     bic.b #(LED1|LED2), &P1OUT
     bis.b #LED1, &P1OUT
-    mov.w ARMED_HALF_MS, R12
+    mov.w #ARMED_HALF_MS, R12
     call #delay_ms
     bic.b #LED1, &P1OUT
-    mov.w ARMED_HALF_MS, R12
+    mov.w #ARMED_HALF_MS, R12
     call #delay_ms
     dec.w R5
     jnz armed_pulse
+    ret
 
 ; TODO: implement alarm_burst
 ; Args:   R7 = alternation pair count
 ; Hint:   each pair: LED1 on/LED2 off → delay → LED1 off/LED2 on → delay
 ;         clear both LEDs when done
 alarm_burst:
-    bic.b #(LED1|LED2), &P1OUT
+
     bis.b #LED1, &P1OUT
-    mov.w ALARM_HALF_MS, R12
+    bic.b #LED2, &P1OUT
+    mov.w #ALARM_HALF_MS, R12
     call #delay_ms
-
-
-
+    bis.b #LED2, &P1OUT
+    bic.b #LED1, &P1OUT
+    mov.w #ALARM_HALF_MS, R12
+    call #delay_ms
+    bic.b #(LED1|LED2), &P1OUT
+    dec.w R7
+    jnz alarm_burst
+    ret
 
 delay_ms:
     mov.w   #333, R13
