@@ -52,3 +52,14 @@ Main initializes registers and sleeps.
 
 **Success criteria:** Behaviour identical to L04-Ex3. CPU sleeps between ticks.
 No polling loop.
+
+---
+
+## Exercise 4 — Project Milestone: Handheld Skeleton
+
+**Requires:** Lessons 1–5 tutorials + Exercises 1–3
+
+Now apply what you've learned to the **handheld gaming platform**. Create the
+game loop shell in `handheld/` — Timer_A CC0 ISR, LPM0 sleep, LED heartbeat.
+
+See `exercises/ex4/README.md` for the full spec, or jump straight to `handheld/`.
