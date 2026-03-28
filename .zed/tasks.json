@@ -1,0 +1,93 @@
+[
+  {
+    "label": "MSP430: Build",
+    "command": "make",
+    "args": [],
+    "tags": ["build"],
+    "cwd": "$ZED_DIRNAME",
+    "reveal": "always",
+    "hide": "on_success",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false
+  },
+  {
+    "label": "MSP430: Flash",
+    "command": "make",
+    "args": ["flash"],
+    "tags": ["flash"],
+    "cwd": "$ZED_DIRNAME",
+    "reveal": "always",
+    "hide": "never",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false
+  },
+  {
+    "label": "MSP430: Build + Flash",
+    "command": "make && make flash",
+    "args": [],
+    "cwd": "$ZED_DIRNAME",
+    "reveal": "always",
+    "hide": "never",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+    "shell": {
+      "program": "zsh",
+      "args": ["-c"]
+    }
+  },
+  {
+    "label": "MSP430: Disassemble",
+    "command": "make",
+    "args": ["disasm"],
+    "cwd": "$ZED_DIRNAME",
+    "reveal": "always",
+    "hide": "never",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false
+  },
+  {
+    "label": "MSP430: Clean",
+    "command": "make",
+    "args": ["clean"],
+    "cwd": "$ZED_DIRNAME",
+    "reveal": "always",
+    "hide": "on_success",
+    "save": "none",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false
+  },
+  {
+    "label": "MSP430: GDB Server",
+    "command": "DYLD_LIBRARY_PATH=$HOME/.local/lib mspdebug tilib \"gdb 2000\"",
+    "args": [],
+    "cwd": "$ZED_DIRNAME",
+    "reveal": "always",
+    "hide": "never",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": true,
+    "shell": {
+      "program": "zsh",
+      "args": ["-c"]
+    }
+  },
+  {
+    "label": "MSP430: Debug (GDB)",
+    "command": "$HOME/ti/msp430-gcc/bin/msp430-elf-gdb -x $ZED_WORKTREE_ROOT/.gdbinit $(find . -name '*.elf' -maxdepth 1 | head -1)",
+    "args": [],
+    "cwd": "$ZED_DIRNAME",
+    "reveal": "always",
+    "hide": "never",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": true,
+    "shell": {
+      "program": "zsh",
+      "args": ["-c"]
+    }
+  }
+]

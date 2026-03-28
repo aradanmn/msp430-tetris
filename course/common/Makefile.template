@@ -20,6 +20,9 @@ MSPDEBUG:= mspdebug
 LIBMSP430_DIR := $(HOME)/.local/lib
 TI_INC  := $(HOME)/ti/msp430-gcc/include
 
+GDB     := $(patsubst %gcc,%gdb,$(GCC))
+GDBINIT := $(shell git -C $(dir $(lastword $(MAKEFILE_LIST))) rev-parse --show-toplevel 2>/dev/null)/.gdbinit
+
 CFLAGS  = -mmcu=$(MCU) -x assembler-with-cpp -nostdlib -g -Os -Wall -Wextra \
           -Wl,-L$(TI_INC) -Wl,-T,$(TI_INC)/$(MCU).ld \
           -Wl,--section-start=.vectors=0xFFE0
@@ -35,7 +38,13 @@ flash: $(TARGET).elf
 disasm: $(TARGET).elf
 	$(OBJDUMP) -d $(TARGET).elf
 
+gdb-server: $(TARGET).elf
+	DYLD_LIBRARY_PATH=$(LIBMSP430_DIR):$$DYLD_LIBRARY_PATH $(MSPDEBUG) tilib "prog $(TARGET).elf" "gdb 2000"
+
+debug: $(TARGET).elf
+	$(GDB) -x $(GDBINIT) $(TARGET).elf
+
 clean:
 	rm -f $(TARGET).elf
 
-.PHONY: all flash disasm clean
+.PHONY: all flash disasm gdb-server debug clean
