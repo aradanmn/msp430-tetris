@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls /Users/scott/Documents/msp430-dev-vm/course/lesson-04*)",
+      "Bash(make)",
+      "Bash(find /Users/scott/Documents/msp430-dev-vm/course/lesson-04-timer-a -name \"*.elf\" -delete)",
+      "Bash(ssh -T git@github.com)",
+      "Bash(ssh-add -l)",
+      "Bash(gh repo:*)",
+      "Bash(gh api:*)",
+      "Read(//private/tmp/Handheld-MSP430/schematic/**)",
+      "Read(//private/tmp/Handheld-MSP430/notes/**)"
+    ]
+  }
+}

@@ -21,14 +21,17 @@ Run: python3 docs/hardware/scripts/gen_kicad7.py
 Output: docs/hardware/schematic/msp430_gameboy.kicad_sch
 """
 
-import re, uuid as _uuid, pathlib
+import re, uuid as _uuid, pathlib, datetime
 
 G = 2.54  # 1 grid unit = 100 mil = 2.54 mm
 
 KICAD_SYM = pathlib.Path(
     '/Applications/KiCad/KiCad.app/Contents/SharedSupport/symbols')
+
+_TS = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+_TODAY = datetime.date.today().isoformat()            # used in title_block date
 OUT_PATH = pathlib.Path(__file__).resolve().parents[1] / \
-    'schematic/msp430_gameboy.kicad_sch'
+    f'schematic/msp430_gameboy_{_TS}.kicad_sch'
 
 
 def uid():
@@ -1256,7 +1259,7 @@ sch = f"""(kicad_sch
   (paper "B")
   (title_block
     (title "MSP430G2553 Handheld Game Console")
-    (date "2026-03-21")
+    (date "{_TODAY}")
     (rev "5.0")
     (company "")
     (comment 1 "MCU: MSP430G2553 (LaunchPad MSP-EXP430G2ET)")
