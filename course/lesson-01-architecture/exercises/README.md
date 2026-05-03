@@ -40,13 +40,13 @@ The startup boilerplate and LED setup are provided. You write:
 1. A `delay_ms` subroutine that waits approximately R12 milliseconds
 2. A main loop that toggles LED1 and calls your delay
 
-To build the delay, you need to know:
-- At 1 MHz, one CPU cycle = 1 microsecond
-- `dec.w` takes 1 cycle, `jnz` takes 2 cycles (when the jump is taken)
-- So a `dec.w` + `jnz` loop burns 3 cycles per iteration
-- How many iterations for 1 millisecond? How do you nest that for R12 milliseconds?
+To build the delay, you need to figure out:
+- How many CPU cycles is 1 millisecond at 1 MHz?
+- How many cycles does one iteration of a `dec` + `jnz` loop consume?
+- How do you nest an inner loop (1 ms) inside an outer loop (R12 ms)?
 
-Do the math yourself. Don't look at the example's delay_ms until you've tried.
+Look up instruction cycle counts in the MSP430 instruction set reference if needed.
+Do the math yourself. Don't look at the example's `delay_ms` until you've tried.
 
 **Success criteria:** LED1 blinks at roughly 2 Hz. Timing doesn't need to be exact —
 within 20% is fine for a software loop.
